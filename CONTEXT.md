@@ -29,30 +29,39 @@ _Avoid_: persistent connection, SketchUp connection
 The SketchUp-extension role that accepts bridge exchanges without owning command behavior.
 _Avoid_: MCP server, command server
 
-**Bridge frame**:
-One newline-terminated JSON-RPC message carried across the bridge.
-_Avoid_: packet, raw request
+**Tool**:
+A capability as an MCP host sees it — the MCP-facing surface only. Every tool
+forwards to exactly one public command, under the same name.
+_Avoid_: function, endpoint, action
 
 **Public command**:
 A named SketchUp operation that an MCP host may discover and invoke.
-_Avoid_: tool implementation, Ruby method
+_Avoid_: tool (past the MCP boundary), operation, Ruby method
 
 **Command catalog**:
-The authoritative contract for public command names, arguments, results, errors, and compatibility aliases.
-_Avoid_: tool list, manifest inventory
+The authoritative inventory of public command names, arguments, results, errors,
+and compatibility aliases. The single source every consumer is checked against.
+_Avoid_: tool contract, tool list, manifest inventory
 
 **Command result**:
 The language-neutral data produced by a successful public command before transport wrapping.
 _Avoid_: response text, success message
 
-**Success envelope**:
-The JSON-RPC result shape that carries a command result back across the bridge.
-_Avoid_: command result, MCP response
-
 **Catalog consumer**:
 A runtime or document whose public command names are checked against the command catalog.
 _Avoid_: source of truth, command owner
 
+**Command executor**:
+The role that carries out a public command once the bridge listener has handed
+it over, independent of which SketchUp adapter it runs against.
+_Avoid_: server, handler, dispatcher
+
 **SketchUp adapter**:
-The role that applies validated command behavior to the active SketchUp model.
-_Avoid_: command executor, bridge listener
+The swappable role a command executor reaches a model through — the real
+SketchUp runtime in production, a controlled double in headless tests.
+_Avoid_: bridge listener, SketchUp wrapper
+
+---
+
+Bridge lifecycle, framing, retry, port, and trust-boundary decisions live in
+[ADR 0001](./docs/adr/0001-local-one-request-bridge-lifecycle.md), not here.
