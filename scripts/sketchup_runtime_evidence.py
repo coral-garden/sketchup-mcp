@@ -382,6 +382,41 @@ class RawArtifactPaths:
         return ((name, getattr(self, name)) for name in RAW_ARTIFACT_KEYS)
 
 
+def discover_raw_artifacts(run_context: Path) -> RawArtifactPaths:
+    """Discover the exact raw bundle inside one prepared run-ID workspace."""
+
+    context_path = run_context.resolve()
+    context = RunContext.from_document(_read_json(context_path, "run context"))
+    directory = context_path.parent
+    if context_path != directory / "run-context.json":
+        raise EvidenceError("run context is outside the prepared run")
+    if directory.name != f"run-{context.run_id}":
+        raise EvidenceError("raw artifacts are outside the prepared run-ID workspace")
+    log_directory = directory / ARTIFACT_NAMES["log_directory"]
+    try:
+        entries = list(log_directory.iterdir())
+    except OSError as error:
+        raise EvidenceError("TestUp FileReporter directory is unreadable") from error
+    roles: dict[str, list[Path]] = {".log": [], ".run": []}
+    for entry in entries:
+        if entry.is_symlink() or not entry.is_file() or entry.suffix not in roles:
+            raise EvidenceError("unexpected TestUp FileReporter artifact role")
+        roles[entry.suffix].append(entry)
+    for suffix, label in ((".log", "log"), (".run", "replay")):
+        if len(roles[suffix]) != 1:
+            raise EvidenceError(f"missing or duplicate TestUp {suffix} artifact")
+    return RawArtifactPaths(
+        run_context=context_path,
+        testup_config=directory / ARTIFACT_NAMES["testup_config"],
+        testup_results=directory / ARTIFACT_NAMES["testup_results"],
+        testup_log=roles[".log"][0],
+        testup_replay=roles[".run"][0],
+        error_log=directory / ARTIFACT_NAMES["error_log"],
+        runtime_report=directory / ARTIFACT_NAMES["runtime_report"],
+        suite_marker=directory / ARTIFACT_NAMES["suite_marker"],
+    )
+
+
 def _render_testup_config(
     repo_root: Path, artifact_dir: Path, seed: int, run_id: str
 ) -> str:
@@ -399,7 +434,9 @@ def _render_testup_config(
     return "\n".join(lines) + "\n"
 
 
-def _package_manifest(package: Path) -> dict[str, str]:
+def package_manifest(package: Path) -> dict[str, str]:
+    """Return the exact installed-file manifest carried by one RBZ."""
+
     try:
         with zipfile.ZipFile(package) as archive:
             names = [member.filename for member in archive.infolist() if not member.is_dir()]
@@ -419,7 +456,7 @@ def _verify_reproducible_package(repo_root: Path, rbz_path: Path) -> tuple[bytes
         raise EvidenceError("RBZ does not match the current package source") from error
     if rebuilt_contents != contents:
         raise EvidenceError("RBZ is not the deterministic build of this checkout")
-    return contents, _package_manifest(rbz_path)
+    return contents, package_manifest(rbz_path)
 
 
 def prepare_run(
@@ -785,7 +822,9 @@ def _git_commit(repo_root: Path) -> str:
     return completed.stdout.strip()
 
 
-def _require_clean_source(repo_root: Path, commit: str) -> None:
+def validate_checkout(repo_root: Path, commit: str) -> None:
+    """Require a clean checkout at one exact full commit."""
+
     if _git_commit(repo_root) != commit:
         raise EvidenceError("requested commit is not the checked-out Git commit")
     completed = subprocess.run(
@@ -855,7 +894,7 @@ def main() -> int:
     root = args.repo_root.resolve()
     commit = args.commit or _git_commit(root)
     try:
-        _require_clean_source(root, commit)
+        validate_checkout(root, commit)
         if args.action == "prepare":
             context_path = prepare_run(
                 repo_root=root,

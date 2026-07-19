@@ -38,3 +38,6 @@ ENV/
 ._*
 Thumbs.db
 *.tar.gz
+
+# Generated verification artifacts
+/artifacts/

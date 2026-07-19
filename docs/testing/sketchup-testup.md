@@ -16,6 +16,18 @@ provides the in-SketchUp Minitest lifecycle; Ruby's built-in
 [`Coverage` branch mode](https://ruby-doc.org/3.2/exts/coverage/Coverage.html)
 provides line and branch measurements.
 
+For release evidence, dispatch the protected `SketchUp Runtime Evidence`
+workflow described in [the verification guide](verification.md). The platform
+commands below remain the authoritative manual procedure and are useful for
+runner setup and diagnosis. The protected workflow does not rely on a manual
+Extension Manager installation: its static `-RubyStartup` bootstrap reads a
+hash-and-size-bound adjacent JSON input, uses the official
+`Sketchup.install_from_archive(path, false)` API, verifies the installed
+package, and loads the exact candidate before TestUp. Before installing, it
+requires the active `Sketchup.find_support_file('Plugins')` directory to be the
+same filesystem directory configured by the protected runner. A release also
+requires that automated installation proof and the trusted GitHub run metadata.
+
 ## What the evidence proves
 
 The operator makes a manual attestation that the machine is the designated

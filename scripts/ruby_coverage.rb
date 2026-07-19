@@ -1,4 +1,5 @@
 require 'coverage'
+require 'json'
 
 coverage_file = File.expand_path(__FILE__)
 $LOADED_FEATURES << coverage_file unless $LOADED_FEATURES.include?(coverage_file)
@@ -78,12 +79,23 @@ module RubyCoverage
       format('%s coverage: %.2f%% (%d/%d)', label, percentage, covered, total)
     end
     private_class_method :format_metric
+
+    def write_report(path, covered_lines:, total_lines:, covered_branches:, total_branches:)
+      report = {
+        schema_version: 1,
+        scope: 'headless_ruby',
+        thresholds: { lines: 100, branches: 100 },
+        lines: { covered: covered_lines, total: total_lines },
+        branches: { covered: covered_branches, total: total_branches }
+      }
+      File.write(path, JSON.pretty_generate(report) + "\n")
+    end
   end
 
   module Runner
     module_function
 
-    def run
+    def run(report_path: nil)
       verify_source_classification!
       test_classes = capture_test_classes do
         Coverage.start(lines: true, branches: true)
@@ -95,7 +107,9 @@ module RubyCoverage
       report_failures(failures)
       abort "#{failures.length} headless coverage tests failed" unless failures.empty?
 
-      summary = Gate.verify!(**metrics(result))
+      coverage_metrics = metrics(result)
+      summary = Gate.verify!(**coverage_metrics)
+      Gate.write_report(report_path, **coverage_metrics) if report_path
       puts "#{test_classes.length} test classes, #{tests} tests, 0 failures"
       puts summary.fetch(:lines)
       puts summary.fetch(:branches)
@@ -208,4 +222,13 @@ module RubyCoverage
 end
 
 
-RubyCoverage::Runner.run if __FILE__ == $PROGRAM_NAME
+if __FILE__ == $PROGRAM_NAME
+  report_path = if ARGV.empty?
+                  nil
+                elsif ARGV.length == 2 && ARGV.first == '--json'
+                  ARGV.fetch(1)
+                else
+                  abort 'Usage: ruby scripts/ruby_coverage.rb [--json REPORT]'
+                end
+  RubyCoverage::Runner.run(report_path: report_path)
+end

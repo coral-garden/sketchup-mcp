@@ -1,0 +1,295 @@
+name: SketchUp Runtime Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full SHA already reachable from origin/main
+        required: true
+        type: string
+      platform:
+        description: Protected interactive runner platform
+        required: true
+        type: choice
+        options:
+          - windows
+          - macos
+      operator:
+        description: Named physical operator making the attestations
+        required: true
+        type: string
+      licensed_runner_confirmed:
+        description: I confirm this is the designated licensed SketchUp runner
+        required: true
+        type: boolean
+      single_testup_process_confirmed:
+        description: I confirm exactly one SketchUp/TestUp process will use this workspace
+        required: true
+        type: boolean
+      candidate_install_confirmed:
+        description: I confirm this workflow may replace only SketchUp MCP in the sentinel Plugins directory
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Licensed SketchUp on Windows
+    if: ${{ inputs.platform == 'windows' }}
+    runs-on: [self-hosted, windows, sketchup-runtime, interactive]
+    environment: sketchup-runtime
+    timeout-minutes: 45
+    steps:
+      - name: Check out trusted main history
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Require trusted commit and explicit attestations
+        shell: pwsh
+        env:
+          CANDIDATE_SHA: ${{ inputs.commit }}
+          ATTESTING_OPERATOR: ${{ inputs.operator }}
+          LICENSED_RUNNER_CONFIRMED: ${{ inputs.licensed_runner_confirmed }}
+          SINGLE_TESTUP_PROCESS_CONFIRMED: ${{ inputs.single_testup_process_confirmed }}
+          CANDIDATE_INSTALL_CONFIRMED: ${{ inputs.candidate_install_confirmed }}
+        run: |
+          if ($env:CANDIDATE_SHA -notmatch '^[0-9a-f]{40}$') {
+            throw 'commit must be a full lowercase Git SHA'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ATTESTING_OPERATOR)) {
+            throw 'a named physical operator is required'
+          }
+          if ($env:LICENSED_RUNNER_CONFIRMED -ne 'true') {
+            throw 'licensed runner attestation must be true'
+          }
+          if ($env:SINGLE_TESTUP_PROCESS_CONFIRMED -ne 'true') {
+            throw 'single TestUp process attestation must be true'
+          }
+          if ($env:CANDIDATE_INSTALL_CONFIRMED -ne 'true') {
+            throw 'candidate install attestation must be true'
+          }
+          git merge-base --is-ancestor $env:CANDIDATE_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'commit is not reachable from origin/main' }
+          git checkout --detach $env:CANDIDATE_SHA
+          if ((git rev-parse HEAD).Trim() -ne $env:CANDIDATE_SHA) {
+            throw 'checked-out commit differs'
+          }
+
+      - name: Build the candidate extension package
+        run: python scripts/build.py --output-dir dist
+
+      - name: Prepare exact candidate installation and TestUp workspace
+        id: prepare
+        shell: pwsh
+        env:
+          CANDIDATE_SHA: ${{ inputs.commit }}
+          ATTESTING_OPERATOR: ${{ inputs.operator }}
+          GITHUB_DISPATCHER: ${{ github.actor }}
+          SKETCHUP_PLUGINS_DIR: ${{ vars.SKETCHUP_WINDOWS_PLUGINS_DIR }}
+        run: |
+          if (-not $env:SKETCHUP_PLUGINS_DIR) {
+            throw 'SKETCHUP_WINDOWS_PLUGINS_DIR is not configured'
+          }
+          $version = (Get-Content VERSION).Trim()
+          python scripts/sketchup_runtime_runner.py prepare `
+            --artifact-dir artifacts/sketchup-testup `
+            --rbz "dist/sketchup-mcp-$version.rbz" `
+            --plugins-dir $env:SKETCHUP_PLUGINS_DIR `
+            --commit $env:CANDIDATE_SHA `
+            --operator $env:ATTESTING_OPERATOR `
+            --dispatcher $env:GITHUB_DISPATCHER `
+            --attest-licensed-runner `
+            --attest-single-testup-process `
+            --attest-candidate-install `
+            --github-output $env:GITHUB_OUTPUT
+          if ($LASTEXITCODE -ne 0) { throw 'runtime preparation failed' }
+
+      - name: Launch SketchUp with candidate bootstrap and TestUp
+        shell: pwsh
+        env:
+          SKETCHUP_EXECUTABLE: ${{ vars.SKETCHUP_WINDOWS_EXECUTABLE }}
+          RUNTIME_BOOTSTRAP: ${{ steps.prepare.outputs.bootstrap }}
+          TESTUP_CONFIG: ${{ steps.prepare.outputs.testup_config }}
+          TESTUP_RUN_ID: ${{ steps.prepare.outputs.run_id }}
+          RUNTIME_REPORT: ${{ steps.prepare.outputs.runtime_report }}
+          SUITE_MARKER: ${{ steps.prepare.outputs.suite_marker }}
+          CANDIDATE_SHA: ${{ inputs.commit }}
+        run: |
+          if (-not $env:SKETCHUP_EXECUTABLE) {
+            throw 'SKETCHUP_WINDOWS_EXECUTABLE is not configured'
+          }
+          $env:SKETCHUP_MCP_TESTUP_COVERAGE = '1'
+          $env:SKETCHUP_MCP_TESTUP_COMMIT = $env:CANDIDATE_SHA
+          $env:SKETCHUP_MCP_TESTUP_RUN_ID = $env:TESTUP_RUN_ID
+          $env:SKETCHUP_MCP_TESTUP_OS_VERSION = `
+            (Get-CimInstance Win32_OperatingSystem).Version
+          $env:SKETCHUP_MCP_TESTUP_RUNTIME_REPORT = $env:RUNTIME_REPORT
+          $env:SKETCHUP_MCP_TESTUP_SUITE_MARKER = $env:SUITE_MARKER
+          $arguments = @(
+            '-RubyStartup', "`"$env:RUNTIME_BOOTSTRAP`"",
+            '-RubyStartupArg', "`"TestUp:CI:Config: $env:TESTUP_CONFIG`""
+          )
+          $process = Start-Process -FilePath $env:SKETCHUP_EXECUTABLE `
+            -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'SketchUp/TestUp failed' }
+
+      - name: Collect and validate the complete runtime bundle
+        shell: pwsh
+        env:
+          RUN_CONTEXT: ${{ steps.prepare.outputs.run_context }}
+          CANDIDATE_RBZ: ${{ steps.prepare.outputs.rbz }}
+          CANDIDATE_SHA: ${{ inputs.commit }}
+        run: |
+          python scripts/sketchup_runtime_runner.py collect `
+            --run-context $env:RUN_CONTEXT --rbz $env:CANDIDATE_RBZ `
+            --commit $env:CANDIDATE_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'runtime collection failed' }
+
+      - name: Preserve the complete trusted runtime workspace
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sketchup-runtime-evidence-${{ github.run_id }}
+          path: ${{ steps.prepare.outputs.workspace }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove the installed candidate from the protected runner
+        if: always()
+        shell: pwsh
+        env:
+          SKETCHUP_PLUGINS_DIR: ${{ vars.SKETCHUP_WINDOWS_PLUGINS_DIR }}
+        run: >-
+          python scripts/sketchup_runtime_runner.py cleanup
+          --plugins-dir "$env:SKETCHUP_PLUGINS_DIR"
+
+  macos:
+    name: Licensed SketchUp on macOS
+    if: ${{ inputs.platform == 'macos' }}
+    runs-on: [self-hosted, macos, sketchup-runtime, interactive]
+    environment: sketchup-runtime
+    timeout-minutes: 45
+    steps:
+      - name: Check out trusted main history
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Require trusted commit and explicit attestations
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.commit }}
+          ATTESTING_OPERATOR: ${{ inputs.operator }}
+          LICENSED_RUNNER_CONFIRMED: ${{ inputs.licensed_runner_confirmed }}
+          SINGLE_TESTUP_PROCESS_CONFIRMED: ${{ inputs.single_testup_process_confirmed }}
+          CANDIDATE_INSTALL_CONFIRMED: ${{ inputs.candidate_install_confirmed }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ -n "$ATTESTING_OPERATOR" ]]
+          [[ "$LICENSED_RUNNER_CONFIRMED" == 'true' ]] || {
+            echo 'licensed runner attestation must be true' >&2; exit 1;
+          }
+          [[ "$SINGLE_TESTUP_PROCESS_CONFIRMED" == 'true' ]] || {
+            echo 'single TestUp process attestation must be true' >&2; exit 1;
+          }
+          [[ "$CANDIDATE_INSTALL_CONFIRMED" == 'true' ]] || {
+            echo 'candidate install attestation must be true' >&2; exit 1;
+          }
+          git merge-base --is-ancestor "$CANDIDATE_SHA" origin/main
+          git checkout --detach "$CANDIDATE_SHA"
+          [[ "$(git rev-parse HEAD)" = "$CANDIDATE_SHA" ]]
+
+      - name: Build the candidate extension package
+        run: python scripts/build.py --output-dir dist
+
+      - name: Prepare exact candidate installation and TestUp workspace
+        id: prepare
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.commit }}
+          ATTESTING_OPERATOR: ${{ inputs.operator }}
+          GITHUB_DISPATCHER: ${{ github.actor }}
+          SKETCHUP_PLUGINS_DIR: ${{ vars.SKETCHUP_MACOS_PLUGINS_DIR }}
+        run: |
+          set -euo pipefail
+          [[ -n "$SKETCHUP_PLUGINS_DIR" ]]
+          version="$(tr -d '\r\n' < VERSION)"
+          python scripts/sketchup_runtime_runner.py prepare \
+            --artifact-dir artifacts/sketchup-testup \
+            --rbz "dist/sketchup-mcp-$version.rbz" \
+            --plugins-dir "$SKETCHUP_PLUGINS_DIR" \
+            --commit "$CANDIDATE_SHA" \
+            --operator "$ATTESTING_OPERATOR" \
+            --dispatcher "$GITHUB_DISPATCHER" \
+            --attest-licensed-runner \
+            --attest-single-testup-process \
+            --attest-candidate-install \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Launch SketchUp with candidate bootstrap and TestUp
+        shell: bash
+        env:
+          SKETCHUP_EXECUTABLE: ${{ vars.SKETCHUP_MACOS_EXECUTABLE }}
+          RUNTIME_BOOTSTRAP: ${{ steps.prepare.outputs.bootstrap }}
+          TESTUP_CONFIG: ${{ steps.prepare.outputs.testup_config }}
+          TESTUP_RUN_ID: ${{ steps.prepare.outputs.run_id }}
+          RUNTIME_REPORT: ${{ steps.prepare.outputs.runtime_report }}
+          SUITE_MARKER: ${{ steps.prepare.outputs.suite_marker }}
+          CANDIDATE_SHA: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          [[ -n "$SKETCHUP_EXECUTABLE" ]]
+          SKETCHUP_MCP_TESTUP_COVERAGE=1 \
+          SKETCHUP_MCP_TESTUP_COMMIT="$CANDIDATE_SHA" \
+          SKETCHUP_MCP_TESTUP_RUN_ID="$TESTUP_RUN_ID" \
+          SKETCHUP_MCP_TESTUP_OS_VERSION="$(sw_vers -productVersion)" \
+          SKETCHUP_MCP_TESTUP_RUNTIME_REPORT="$RUNTIME_REPORT" \
+          SKETCHUP_MCP_TESTUP_SUITE_MARKER="$SUITE_MARKER" \
+            "$SKETCHUP_EXECUTABLE" \
+            -RubyStartup "$RUNTIME_BOOTSTRAP" \
+            -RubyStartupArg "TestUp:CI:Config: $TESTUP_CONFIG"
+
+      - name: Collect and validate the complete runtime bundle
+        shell: bash
+        env:
+          RUN_CONTEXT: ${{ steps.prepare.outputs.run_context }}
+          CANDIDATE_RBZ: ${{ steps.prepare.outputs.rbz }}
+          CANDIDATE_SHA: ${{ inputs.commit }}
+        run: >-
+          python scripts/sketchup_runtime_runner.py collect
+          --run-context "$RUN_CONTEXT" --rbz "$CANDIDATE_RBZ"
+          --commit "$CANDIDATE_SHA"
+
+      - name: Preserve the complete trusted runtime workspace
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sketchup-runtime-evidence-${{ github.run_id }}
+          path: ${{ steps.prepare.outputs.workspace }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove the installed candidate from the protected runner
+        if: always()
+        shell: bash
+        env:
+          SKETCHUP_PLUGINS_DIR: ${{ vars.SKETCHUP_MACOS_PLUGINS_DIR }}
+        run: >-
+          python scripts/sketchup_runtime_runner.py cleanup
+          --plugins-dir "$SKETCHUP_PLUGINS_DIR"

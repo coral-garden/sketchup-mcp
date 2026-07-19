@@ -251,6 +251,7 @@ The connection lifecycle and trust decision are recorded in
 
 - [Domain language](CONTEXT.md)
 - [Public command catalog](docs/command-catalog.md)
+- [Contributor verification and release gate](docs/testing/verification.md)
 - [Contributor workflow tracking issue](https://github.com/coral-garden/sketchup-mcp/issues/19)
 
 ## License

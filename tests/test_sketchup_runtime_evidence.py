@@ -21,6 +21,7 @@ from sketchup_runtime_evidence import (  # noqa: E402
     EvidenceError,
     RawArtifactPaths,
     collect_evidence,
+    discover_raw_artifacts,
     prepare_run,
     suite_sha256,
     validate_evidence,
@@ -73,6 +74,11 @@ class SketchupRuntimeEvidenceTest(unittest.TestCase):
         self.assertEqual(self.path("testup_replay").name, replay["filename"])
         self.assertEqual(self.path("testup_replay").stat().st_size, replay["size"])
         self.assertRegex(replay["sha256"], r"^[0-9a-f]{64}$")
+
+    def test_public_bundle_discovery_returns_the_exact_prepared_raw_paths(self):
+        discovered = discover_raw_artifacts(self.context_path)
+
+        self.assertEqual(self.raw_paths(), discovered)
 
     def test_file_reporter_requires_exactly_one_log_and_one_replay(self):
         cases = (

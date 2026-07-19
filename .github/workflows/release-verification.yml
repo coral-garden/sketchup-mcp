@@ -1,0 +1,114 @@
+name: Release Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full release-candidate SHA reachable from origin/main
+        required: true
+        type: string
+      runtime_run_id:
+        description: Successful SketchUp Runtime Evidence workflow run ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    name: Bind hosted and licensed-runtime verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out trusted main history
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Require trusted immutable identifiers
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo 'candidate_sha must be a full lowercase Git SHA' >&2
+            exit 1
+          }
+          [[ "$RUNTIME_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            echo 'runtime_run_id must be a positive decimal integer' >&2
+            exit 1
+          }
+          git merge-base --is-ancestor "$CANDIDATE_SHA" origin/main || {
+            echo 'candidate_sha is not reachable from origin/main' >&2
+            exit 1
+          }
+          git checkout --detach "$CANDIDATE_SHA"
+          [[ "$(git rev-parse HEAD)" = "$CANDIDATE_SHA" ]]
+
+      - name: Install verification dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          --requirement requirements.txt "coverage[toml]==7.10.7"
+
+      - name: Capture trusted GitHub run and artifact metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+          EXPECTED_ARTIFACT: sketchup-runtime-evidence-${{ inputs.runtime_run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/trusted-runtime
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUNTIME_RUN_ID}" \
+            > artifacts/trusted-runtime/.github-run-api.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUNTIME_RUN_ID}/artifacts?per_page=100" \
+            > artifacts/trusted-runtime/.github-artifacts-api.json
+          jq --arg name "$EXPECTED_ARTIFACT" \
+            '[.artifacts[] | select(.name == $name)] | if length == 1 then .[0] else error("expected exactly one runtime artifact") end' \
+            artifacts/trusted-runtime/.github-artifacts-api.json \
+            > artifacts/trusted-runtime/.selected-artifact.json
+          jq -n \
+            --slurpfile run artifacts/trusted-runtime/.github-run-api.json \
+            --slurpfile artifact artifacts/trusted-runtime/.selected-artifact.json \
+            '{schema_version: 1, run: $run[0], artifact: $artifact[0]}' \
+            > artifacts/trusted-runtime/github-run.json
+          rm artifacts/trusted-runtime/.github-run-api.json \
+            artifacts/trusted-runtime/.github-artifacts-api.json \
+            artifacts/trusted-runtime/.selected-artifact.json
+
+      - name: Download exact same-repository runtime artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sketchup-runtime-evidence-${{ inputs.runtime_run_id }}
+          path: artifacts/trusted-runtime
+          run-id: ${{ inputs.runtime_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Run release verification gate
+        shell: bash
+        env:
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+        run: >-
+          python scripts/verify.py release
+          --runtime-root artifacts/trusted-runtime
+          --runtime-run-id "$RUNTIME_RUN_ID"
+
+      - name: Preserve the release verification report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-verification-${{ inputs.candidate_sha }}
+          path: artifacts/verification/
+          if-no-files-found: error
+          retention-days: 14
