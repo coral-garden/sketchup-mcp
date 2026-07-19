@@ -33,6 +33,7 @@ class CommandContract:
     optional_arguments: tuple[ArgumentContract, ...]
     success: Mapping[str, Any]
     failures: tuple[str, ...]
+    constraints: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,7 @@ def load_command_catalog() -> CommandCatalog:
             ),
             success=_freeze(command["success"]),
             failures=tuple(command["failures"]),
+            constraints=_freeze(command.get("constraints", {})),
         )
         for command in raw["commands"]
     )
@@ -221,6 +223,22 @@ def validate_command_arguments(
     for name, value in arguments.items():
         _validate_argument(name, value, contracts[name])
 
+    for distinct_names in (command.constraints or {}).get(
+        "distinct_arguments", ()
+    ):
+        values = [arguments.get(name) for name in distinct_names]
+        if all(value is not None for value in values):
+            normalized = [
+                int(value) if isinstance(value, str) and value.isdecimal() else value
+                for value in values
+            ]
+            if len(set(normalized)) != len(normalized):
+                raise InvalidCommandArguments(
+                    "arguments "
+                    + ", ".join(distinct_names)
+                    + " must identify different entities"
+                )
+
 
 def _validate_argument(name: str, value: Any, contract: ArgumentContract) -> None:
     constraints = contract.constraints or {}
@@ -232,7 +250,7 @@ def _validate_argument(name: str, value: Any, contract: ArgumentContract) -> Non
             and value >= 1
         ) or (
             isinstance(value, str)
-            and re.fullmatch(r"0*[1-9][0-9]*", value) is not None
+            and re.fullmatch(r"[1-9][0-9]*", value) is not None
         )
     elif contract.type == "number[3]":
         valid = (
@@ -279,6 +297,27 @@ def _validate_argument(name: str, value: Any, contract: ArgumentContract) -> Non
             f"argument {name!r} must contain at least "
             f"{constraints['min_length']} character(s)"
         )
+    if any(
+        forbidden in value
+        for forbidden in constraints.get("forbidden_substrings", ())
+    ):
+        raise InvalidCommandArguments(
+            f"argument {name!r} contains a forbidden operation-management call"
+        )
+    if (
+        "exclusive_minimum" in constraints
+        and value <= constraints["exclusive_minimum"]
+    ):
+        raise InvalidCommandArguments(
+            f"argument {name!r} must be greater than {constraints['exclusive_minimum']}"
+        )
+    if (
+        "exclusive_maximum" in constraints
+        and value >= constraints["exclusive_maximum"]
+    ):
+        raise InvalidCommandArguments(
+            f"argument {name!r} must be less than {constraints['exclusive_maximum']}"
+        )
 
 
 def _is_finite_number(value: Any) -> bool:
@@ -295,7 +334,7 @@ def _json_schema(argument: ArgumentContract, optional: bool) -> dict[str, Any]:
         schema: dict[str, Any] = {
             "anyOf": [
                 {"type": "integer", "minimum": 1},
-                {"type": "string", "pattern": "^(?:0*[1-9][0-9]*)$"},
+                {"type": "string", "pattern": "^[1-9][0-9]*$"},
             ]
         }
     elif argument.type == "number[3]":
@@ -326,6 +365,10 @@ def _json_schema(argument: ArgumentContract, optional: bool) -> dict[str, Any]:
         schema["enum"] = list(constraints["enum"])
     if "min_length" in constraints:
         schema["minLength"] = constraints["min_length"]
+    if "exclusive_minimum" in constraints:
+        schema["exclusiveMinimum"] = constraints["exclusive_minimum"]
+    if "exclusive_maximum" in constraints:
+        schema["exclusiveMaximum"] = constraints["exclusive_maximum"]
     if optional and argument.default is not None:
         schema["default"] = _json_value(argument.default)
     return schema

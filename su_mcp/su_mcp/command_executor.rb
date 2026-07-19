@@ -39,6 +39,14 @@ module SU_MCP
       when 'boolean_operation'
         validate_boolean_entities(arguments)
         @sketchup.boolean_operation(**keywords(arguments))
+      when 'create_mortise_tenon'
+        @sketchup.create_mortise_tenon(**keywords(arguments))
+      when 'create_dovetail'
+        @sketchup.create_dovetail(**keywords(arguments))
+      when 'create_finger_joint'
+        @sketchup.create_finger_joint(**keywords(arguments))
+      when 'eval_ruby'
+        @sketchup.eval_ruby(**keywords(arguments))
       else
         @sketchup.execute(name, arguments)
       end

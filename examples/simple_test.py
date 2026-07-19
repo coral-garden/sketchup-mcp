@@ -19,9 +19,6 @@ CUBE_CODE = """
 model = Sketchup.active_model
 entities = model.active_entities
 
-# Start an operation for undo
-model.start_operation("Create Test Cube", true)
-
 # Create a group for the cube
 group = entities.add_group
 
@@ -35,9 +32,6 @@ face = group.entities.add_face(
 
 # Push/pull to create the cube
 face.pushpull(10)
-
-# End the operation
-model.commit_operation
 
 # Return the group ID
 group.entityID.to_s
@@ -72,4 +66,4 @@ def main():
     logger.info("Test completed.")
 
 if __name__ == "__main__":
-    main() 
+    main()

@@ -8,8 +8,7 @@ from sketchup_mcp.bridge import (
     BridgeProtocolError,
     InMemoryBridgeAdapter,
 )
-from sketchup_mcp.mcp_server import CreateComponentTool
-from sketchup_mcp.mcp_server import SceneGeometryTools
+from sketchup_mcp.mcp_server import CommandForwarder, CreateComponentTool
 from sketchup_mcp.command_catalog import manifest_tools
 
 
@@ -23,9 +22,223 @@ SCENE_GEOMETRY_CONTRACT = json.loads(
         encoding="utf-8"
     )
 )
+JOINERY_EVAL_CONTRACT = json.loads(
+    (Path(__file__).parents[1] / "test/fixtures/joinery_eval_contract.json").read_text(
+        encoding="utf-8"
+    )
+)
 
 
 class PythonRuntimeTest(unittest.TestCase):
+    def test_joinery_and_eval_commands_share_the_catalogued_forwarding_interface(self):
+        for command in JOINERY_EVAL_CONTRACT["commands"]:
+            with self.subTest(command=command["name"]):
+                adapter = InMemoryBridgeAdapter.returning(command["wire_result"])
+                forwarder = CommandForwarder(BridgeClient(adapter=adapter))
+
+                result = forwarder.call(
+                    command["name"],
+                    command["arguments"],
+                    request_id=command["request_id"],
+                )
+
+                self.assertEqual(json.dumps(command["wire_result"]), result)
+                self.assertEqual(command["request_id"], adapter.requests[0]["id"])
+                self.assertEqual(
+                    {"name": command["name"], "arguments": command["arguments"]},
+                    adapter.requests[0]["params"],
+                )
+
+    def test_fastmcp_joinery_eval_schemas_and_invalid_inputs_come_from_the_catalog(self):
+        from mcp.shared.memory import create_connected_server_and_client_session
+        from sketchup_mcp import server as exported_server
+
+        names = {command["name"] for command in JOINERY_EVAL_CONTRACT["commands"]}
+        expected = {
+            tool["name"]: tool["parameters"]
+            for tool in manifest_tools()
+            if tool["name"] in names
+        }
+        actual = {
+            tool.name: tool.inputSchema
+            for tool in asyncio.run(exported_server.mcp.list_tools())
+            if tool.name in names
+        }
+        self.assertEqual(expected, actual)
+        self.assertEqual(
+            0,
+            actual["create_mortise_tenon"]["properties"]["width"]["exclusiveMinimum"],
+        )
+        self.assertEqual(
+            90,
+            actual["create_dovetail"]["properties"]["angle"]["exclusiveMaximum"],
+        )
+
+        invalid_arguments = JOINERY_EVAL_CONTRACT["invalid_arguments"] + [
+            {
+                "name": "create_dovetail",
+                "arguments": {"tail_id": 1},
+                "contains": "pin_id",
+            },
+            {
+                "name": "create_finger_joint",
+                "arguments": {
+                    "board1_id": 1,
+                    "board2_id": 2,
+                    "offset_z": float("inf"),
+                },
+                "contains": "offset_z",
+            },
+        ]
+        adapter = InMemoryBridgeAdapter.returning({})
+
+        async def call_invalid_tools():
+            with exported_server.use_bridge_client(BridgeClient(adapter=adapter)):
+                async with create_connected_server_and_client_session(
+                    exported_server.mcp
+                ) as session:
+                    return [
+                        await session.call_tool(case["name"], case["arguments"])
+                        for case in invalid_arguments
+                    ]
+
+        results = asyncio.run(call_invalid_tools())
+        for case, result in zip(invalid_arguments, results, strict=True):
+            self.assertTrue(result.isError, case)
+            self.assertIn(case["contains"], result.content[0].text)
+        self.assertEqual([], adapter.requests)
+
+    def test_public_joinery_eval_tools_forward_valid_calls_and_preserve_errors(self):
+        from sketchup_mcp import server as exported_server
+
+        invocations = {
+            "create_mortise_tenon": lambda context, arguments: exported_server.create_mortise_tenon(
+                context, **arguments
+            ),
+            "create_dovetail": lambda context, arguments: exported_server.create_dovetail(
+                context, **arguments
+            ),
+            "create_finger_joint": lambda context, arguments: exported_server.create_finger_joint(
+                context, **arguments
+            ),
+            "eval_ruby": lambda context, arguments: exported_server.eval_ruby(
+                context, **arguments
+            ),
+        }
+        actions = {
+            "create_mortise_tenon": "creating mortise and tenon joint",
+            "create_dovetail": "creating dovetail joint",
+            "create_finger_joint": "creating finger joint",
+            "eval_ruby": "evaluating Ruby",
+        }
+
+        for command in JOINERY_EVAL_CONTRACT["commands"]:
+            context = type(
+                "RequestContext", (), {"request_id": command["request_id"]}
+            )()
+            adapter = InMemoryBridgeAdapter.returning(command["wire_result"])
+            with exported_server.use_bridge_client(BridgeClient(adapter=adapter)):
+                result = invocations[command["name"]](context, command["arguments"])
+            self.assertEqual(json.dumps(command["wire_result"]), result)
+            self.assertEqual(
+                command["arguments"], adapter.requests[0]["params"]["arguments"]
+            )
+
+            remote = InMemoryBridgeAdapter(
+                lambda request: {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32603,
+                        "message": "stable command failure",
+                        "data": {"success": False, "secret": "must-not-render"},
+                    },
+                    "id": request["id"],
+                }
+            )
+            with exported_server.use_bridge_client(BridgeClient(adapter=remote)):
+                failure = invocations[command["name"]](context, command["arguments"])
+            self.assertEqual(
+                f"Error {actions[command['name']]}: "
+                "SketchUp bridge error -32603: stable command failure",
+                failure,
+            )
+            self.assertNotIn("must-not-render", failure)
+
+    def test_connected_fastmcp_joinery_eval_calls_reach_the_bridge(self):
+        from mcp.shared.memory import create_connected_server_and_client_session
+        from sketchup_mcp import server as exported_server
+
+        by_name = {
+            command["name"]: command for command in JOINERY_EVAL_CONTRACT["commands"]
+        }
+        adapter = InMemoryBridgeAdapter(
+            lambda request: {
+                "jsonrpc": "2.0",
+                "result": by_name[request["params"]["name"]]["wire_result"],
+                "id": request["id"],
+            }
+        )
+
+        async def call_tools():
+            with exported_server.use_bridge_client(BridgeClient(adapter=adapter)):
+                async with create_connected_server_and_client_session(
+                    exported_server.mcp
+                ) as session:
+                    return [
+                        await session.call_tool(
+                            command["name"], command["arguments"]
+                        )
+                        for command in JOINERY_EVAL_CONTRACT["commands"]
+                    ]
+
+        results = asyncio.run(call_tools())
+        for command, result in zip(
+            JOINERY_EVAL_CONTRACT["commands"], results, strict=True
+        ):
+            self.assertFalse(result.isError)
+            self.assertEqual(
+                json.dumps(command["wire_result"]), result.content[0].text
+            )
+        self.assertEqual(
+            [command["arguments"] for command in JOINERY_EVAL_CONTRACT["commands"]],
+            [request["params"]["arguments"] for request in adapter.requests],
+        )
+
+    def test_connected_fastmcp_joinery_calls_expand_catalog_defaults(self):
+        from mcp.shared.memory import create_connected_server_and_client_session
+        from sketchup_mcp import server as exported_server
+
+        required = {
+            "create_mortise_tenon": {"mortise_id": 1, "tenon_id": 2},
+            "create_dovetail": {"tail_id": 3, "pin_id": 4},
+            "create_finger_joint": {"board1_id": 5, "board2_id": 6},
+        }
+        adapter = InMemoryBridgeAdapter(
+            lambda request: {
+                "jsonrpc": "2.0",
+                "result": {"content": [], "isError": False, "success": True},
+                "id": request["id"],
+            }
+        )
+
+        async def call_tools():
+            with exported_server.use_bridge_client(BridgeClient(adapter=adapter)):
+                async with create_connected_server_and_client_session(
+                    exported_server.mcp
+                ) as session:
+                    for name, arguments in required.items():
+                        await session.call_tool(name, arguments)
+
+        asyncio.run(call_tools())
+        expected = [
+            required[name] | JOINERY_EVAL_CONTRACT["defaults"][name]
+            for name in required
+        ]
+        self.assertEqual(
+            expected,
+            [request["params"]["arguments"] for request in adapter.requests],
+        )
+
     def test_valid_fastmcp_create_component_call_reaches_the_bridge_unchanged(self):
         from mcp.shared.memory import create_connected_server_and_client_session
         from sketchup_mcp import server as exported_server
@@ -95,7 +308,7 @@ class PythonRuntimeTest(unittest.TestCase):
                     {"type": "integer", "minimum": 1},
                     {
                         "type": "string",
-                        "pattern": "^(?:0*[1-9][0-9]*)$",
+                        "pattern": "^[1-9][0-9]*$",
                     },
                 ],
                 "description": "SketchUp entity ID to delete.",
@@ -165,7 +378,7 @@ class PythonRuntimeTest(unittest.TestCase):
         for command in SCENE_GEOMETRY_CONTRACT["commands"]:
             with self.subTest(command=command["name"]):
                 adapter = InMemoryBridgeAdapter.returning(command["wire_result"])
-                tools = SceneGeometryTools(BridgeClient(adapter=adapter))
+                tools = CommandForwarder(BridgeClient(adapter=adapter))
 
                 result = tools.call(
                     command["name"],

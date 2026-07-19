@@ -1,0 +1,50 @@
+{
+  "commands": [
+    {
+      "name": "create_mortise_tenon",
+      "arguments": {"mortise_id": "101", "tenon_id": 102, "width": 2.0, "height": 1.0, "depth": 0.75, "offset_x": 0.25, "offset_y": 0.0, "offset_z": -0.5},
+      "command_result": {"mortise_id": 201, "tenon_id": 202},
+      "wire_result": {"content": [{"type": "text", "text": "{\"mortise_id\":201,\"tenon_id\":202}"}], "isError": false, "success": true},
+      "request_id": "joinery-mortise-1"
+    },
+    {
+      "name": "create_dovetail",
+      "arguments": {"tail_id": 103, "pin_id": "104", "width": 4.0, "height": 1.5, "depth": 0.5, "angle": 14.0, "num_tails": 3, "offset_x": 0.0, "offset_y": 0.5, "offset_z": 0.0},
+      "command_result": {"tail_id": 203, "pin_id": 204},
+      "wire_result": {"content": [{"type": "text", "text": "{\"tail_id\":203,\"pin_id\":204}"}], "isError": false, "success": true},
+      "request_id": 2
+    },
+    {
+      "name": "create_finger_joint",
+      "arguments": {"board1_id": "105", "board2_id": 106, "width": 5.0, "height": 2.0, "depth": 0.75, "num_fingers": 5, "offset_x": -0.25, "offset_y": 0.0, "offset_z": 0.5},
+      "command_result": {"board1_id": 205, "board2_id": 206},
+      "wire_result": {"content": [{"type": "text", "text": "{\"board1_id\":205,\"board2_id\":206}"}], "isError": false, "success": true},
+      "request_id": null
+    },
+    {
+      "name": "eval_ruby",
+      "arguments": {"code": "[1, {'count' => 2}, nil]"},
+      "command_result": {"result": [1, {"count": 2}, null], "result_type": "Array"},
+      "wire_result": {"content": [{"type": "text", "text": "{\"result\":[1,{\"count\":2},null],\"result_type\":\"Array\"}"}], "isError": false, "success": true},
+      "request_id": "eval-4"
+    }
+  ],
+  "defaults": {
+    "create_mortise_tenon": {"width": 1.0, "height": 1.0, "depth": 1.0, "offset_x": 0.0, "offset_y": 0.0, "offset_z": 0.0},
+    "create_dovetail": {"width": 1.0, "height": 1.0, "depth": 1.0, "angle": 15.0, "num_tails": 3, "offset_x": 0.0, "offset_y": 0.0, "offset_z": 0.0},
+    "create_finger_joint": {"width": 1.0, "height": 1.0, "depth": 1.0, "num_fingers": 5, "offset_x": 0.0, "offset_y": 0.0, "offset_z": 0.0}
+  },
+  "invalid_arguments": [
+    {"name": "create_mortise_tenon", "arguments": {"mortise_id": 1, "tenon_id": 1}, "contains": "different entities"},
+    {"name": "create_mortise_tenon", "arguments": {"mortise_id": 1, "tenon_id": 2, "width": 0}, "contains": "width"},
+    {"name": "create_dovetail", "arguments": {"tail_id": 1, "pin_id": 2, "angle": 0}, "contains": "angle"},
+    {"name": "create_dovetail", "arguments": {"tail_id": 1, "pin_id": 2, "angle": 90}, "contains": "angle"},
+    {"name": "create_dovetail", "arguments": {"tail_id": 1, "pin_id": 2, "num_tails": 2.5}, "contains": "num_tails"},
+    {"name": "create_finger_joint", "arguments": {"board1_id": 1, "board2_id": 2, "num_fingers": 0}, "contains": "num_fingers"},
+    {"name": "create_finger_joint", "arguments": {"board1_id": "1.0", "board2_id": 2}, "contains": "board1_id"},
+    {"name": "create_finger_joint", "arguments": {"board1_id": "001", "board2_id": 2}, "contains": "board1_id"},
+    {"name": "eval_ruby", "arguments": {"code": ""}, "contains": "code"},
+    {"name": "eval_ruby", "arguments": {"code": "Sketchup.active_model.start_operation('nested', true)"}, "contains": "operation-management"},
+    {"name": "eval_ruby", "arguments": {"code": "1", "extra": true}, "contains": "extra"}
+  ]
+}

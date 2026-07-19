@@ -6,7 +6,7 @@ from typing import AsyncIterator, Dict, Any, Iterator, List
 
 from .bridge import BridgeClient
 from .catalog_fastmcp import CatalogFastMCP
-from .mcp_server import CreateComponentTool, SceneGeometryTools
+from .mcp_server import CommandForwarder, CreateComponentTool
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -42,7 +42,7 @@ def use_bridge_client(client: BridgeClient) -> Iterator[None]:
         _bridge_client = previous
 
 
-def call_scene_geometry_tool(
+def call_catalog_tool(
     request_id: Any,
     command: str,
     arguments: dict[str, Any],
@@ -51,7 +51,7 @@ def call_scene_geometry_tool(
     """Serialize a bridge result while retaining the public tool error wording."""
 
     try:
-        return SceneGeometryTools(get_bridge_client()).call(
+        return CommandForwarder(get_bridge_client()).call(
             command,
             arguments,
             request_id=request_id,
@@ -74,7 +74,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 
 # The scene/geometry family is catalog-governed while the remaining handlers are
 # migrated independently by the next command-family issue.
-SCENE_GEOMETRY_COMMANDS = (
+CATALOG_COMMANDS = (
     "create_component",
     "delete_component",
     "transform_component",
@@ -82,6 +82,10 @@ SCENE_GEOMETRY_COMMANDS = (
     "set_material",
     "export_scene",
     "boolean_operation",
+    "create_mortise_tenon",
+    "create_dovetail",
+    "create_finger_joint",
+    "eval_ruby",
 )
 
 # Create MCP server with lifespan support
@@ -89,7 +93,7 @@ mcp = CatalogFastMCP(
     "SketchupMCP",
     instructions="Sketchup integration through the Model Context Protocol",
     lifespan=server_lifespan,
-    catalog_commands=SCENE_GEOMETRY_COMMANDS,
+    catalog_commands=CATALOG_COMMANDS,
 )
 
 # Tool endpoints
@@ -114,7 +118,7 @@ def delete_component(
     id: int | str
 ) -> str:
     """Delete a component by ID"""
-    return call_scene_geometry_tool(
+    return call_catalog_tool(
         ctx.request_id, "delete_component", {"id": id}, "deleting component"
     )
 
@@ -134,7 +138,7 @@ def transform_component(
         arguments["rotation"] = rotation
     if scale is not None:
         arguments["scale"] = scale
-    return call_scene_geometry_tool(
+    return call_catalog_tool(
         ctx.request_id,
         "transform_component",
         arguments,
@@ -144,7 +148,7 @@ def transform_component(
 @mcp.tool()
 def get_selection(ctx: Context) -> str:
     """Get currently selected components"""
-    return call_scene_geometry_tool(
+    return call_catalog_tool(
         ctx.request_id, "get_selection", {}, "getting selection"
     )
 
@@ -155,7 +159,7 @@ def set_material(
     material: str
 ) -> str:
     """Set material for a component"""
-    return call_scene_geometry_tool(
+    return call_catalog_tool(
         ctx.request_id,
         "set_material",
         {"id": id, "material": material},
@@ -168,7 +172,7 @@ def export_scene(
     format: str = "skp"
 ) -> str:
     """Export the current scene"""
-    return call_scene_geometry_tool(
+    return call_catalog_tool(
         ctx.request_id,
         "export_scene",
         {"format": format},
@@ -185,7 +189,7 @@ def boolean_operation(
     delete_originals: bool = False,
 ) -> str:
     """Create the union, difference, or intersection of two solid groups."""
-    return call_scene_geometry_tool(
+    return call_catalog_tool(
         ctx.request_id,
         "boolean_operation",
         {
@@ -200,8 +204,8 @@ def boolean_operation(
 @mcp.tool()
 def create_mortise_tenon(
     ctx: Context,
-    mortise_id: str,
-    tenon_id: str,
+    mortise_id: int | str,
+    tenon_id: int | str,
     width: float = 1.0,
     height: float = 1.0,
     depth: float = 1.0,
@@ -210,40 +214,27 @@ def create_mortise_tenon(
     offset_z: float = 0.0
 ) -> str:
     """Create a mortise and tenon joint between two components"""
-    try:
-        logger.info(f"create_mortise_tenon called with mortise_id={mortise_id}, tenon_id={tenon_id}, width={width}, height={height}, depth={depth}, offsets=({offset_x}, {offset_y}, {offset_z})")
-        
-        sketchup = get_bridge_client()
-        
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "create_mortise_tenon",
-                "arguments": {
-                    "mortise_id": mortise_id,
-                    "tenon_id": tenon_id,
-                    "width": width,
-                    "height": height,
-                    "depth": depth,
-                    "offset_x": offset_x,
-                    "offset_y": offset_y,
-                    "offset_z": offset_z
-                }
-            },
-            request_id=ctx.request_id
-        )
-        
-        logger.info(f"create_mortise_tenon result: {result}")
-        return json.dumps(result)
-    except Exception as e:
-        logger.error(f"Error in create_mortise_tenon: {str(e)}")
-        return f"Error creating mortise and tenon joint: {str(e)}"
+    return call_catalog_tool(
+        ctx.request_id,
+        "create_mortise_tenon",
+        {
+            "mortise_id": mortise_id,
+            "tenon_id": tenon_id,
+            "width": width,
+            "height": height,
+            "depth": depth,
+            "offset_x": offset_x,
+            "offset_y": offset_y,
+            "offset_z": offset_z,
+        },
+        "creating mortise and tenon joint",
+    )
 
 @mcp.tool()
 def create_dovetail(
     ctx: Context,
-    tail_id: str,
-    pin_id: str,
+    tail_id: int | str,
+    pin_id: int | str,
     width: float = 1.0,
     height: float = 1.0,
     depth: float = 1.0,
@@ -254,42 +245,29 @@ def create_dovetail(
     offset_z: float = 0.0
 ) -> str:
     """Create a dovetail joint between two components"""
-    try:
-        logger.info(f"create_dovetail called with tail_id={tail_id}, pin_id={pin_id}, width={width}, height={height}, depth={depth}, angle={angle}, num_tails={num_tails}")
-        
-        sketchup = get_bridge_client()
-        
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "create_dovetail",
-                "arguments": {
-                    "tail_id": tail_id,
-                    "pin_id": pin_id,
-                    "width": width,
-                    "height": height,
-                    "depth": depth,
-                    "angle": angle,
-                    "num_tails": num_tails,
-                    "offset_x": offset_x,
-                    "offset_y": offset_y,
-                    "offset_z": offset_z
-                }
-            },
-            request_id=ctx.request_id
-        )
-        
-        logger.info(f"create_dovetail result: {result}")
-        return json.dumps(result)
-    except Exception as e:
-        logger.error(f"Error in create_dovetail: {str(e)}")
-        return f"Error creating dovetail joint: {str(e)}"
+    return call_catalog_tool(
+        ctx.request_id,
+        "create_dovetail",
+        {
+            "tail_id": tail_id,
+            "pin_id": pin_id,
+            "width": width,
+            "height": height,
+            "depth": depth,
+            "angle": angle,
+            "num_tails": num_tails,
+            "offset_x": offset_x,
+            "offset_y": offset_y,
+            "offset_z": offset_z,
+        },
+        "creating dovetail joint",
+    )
 
 @mcp.tool()
 def create_finger_joint(
     ctx: Context,
-    board1_id: str,
-    board2_id: str,
+    board1_id: int | str,
+    board2_id: int | str,
     width: float = 1.0,
     height: float = 1.0,
     depth: float = 1.0,
@@ -299,35 +277,22 @@ def create_finger_joint(
     offset_z: float = 0.0
 ) -> str:
     """Create a finger joint (box joint) between two components"""
-    try:
-        logger.info(f"create_finger_joint called with board1_id={board1_id}, board2_id={board2_id}, width={width}, height={height}, depth={depth}, num_fingers={num_fingers}")
-        
-        sketchup = get_bridge_client()
-        
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "create_finger_joint",
-                "arguments": {
-                    "board1_id": board1_id,
-                    "board2_id": board2_id,
-                    "width": width,
-                    "height": height,
-                    "depth": depth,
-                    "num_fingers": num_fingers,
-                    "offset_x": offset_x,
-                    "offset_y": offset_y,
-                    "offset_z": offset_z
-                }
-            },
-            request_id=ctx.request_id
-        )
-        
-        logger.info(f"create_finger_joint result: {result}")
-        return json.dumps(result)
-    except Exception as e:
-        logger.error(f"Error in create_finger_joint: {str(e)}")
-        return f"Error creating finger joint: {str(e)}"
+    return call_catalog_tool(
+        ctx.request_id,
+        "create_finger_joint",
+        {
+            "board1_id": board1_id,
+            "board2_id": board2_id,
+            "width": width,
+            "height": height,
+            "depth": depth,
+            "num_fingers": num_fingers,
+            "offset_x": offset_x,
+            "offset_y": offset_y,
+            "offset_z": offset_z,
+        },
+        "creating finger joint",
+    )
 
 @mcp.tool()
 def eval_ruby(
@@ -335,37 +300,12 @@ def eval_ruby(
     code: str
 ) -> str:
     """Evaluate arbitrary Ruby code in Sketchup"""
-    try:
-        logger.info(f"eval_ruby called with code length: {len(code)}")
-        
-        sketchup = get_bridge_client()
-        
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "eval_ruby",
-                "arguments": {
-                    "code": code
-                }
-            },
-            request_id=ctx.request_id
-        )
-        
-        logger.info(f"eval_ruby result: {result}")
-        
-        # Format the response to include the result
-        response = {
-            "success": True,
-            "result": result.get("content", [{"text": "Success"}])[0].get("text", "Success") if isinstance(result.get("content"), list) and len(result.get("content", [])) > 0 else "Success"
-        }
-        
-        return json.dumps(response)
-    except Exception as e:
-        logger.error(f"Error in eval_ruby: {str(e)}")
-        return json.dumps({
-            "success": False,
-            "error": str(e)
-        })
+    return call_catalog_tool(
+        ctx.request_id,
+        "eval_ruby",
+        {"code": code},
+        "evaluating Ruby",
+    )
 
 def main():
     mcp.run()

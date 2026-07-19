@@ -1,9 +1,14 @@
 require 'json'
 require_relative 'command_catalog'
+require_relative 'command_execution_error'
 
 
 module SU_MCP
   class CommandDispatcher
+    JOINERY_COMMANDS = %w[
+      create_mortise_tenon create_dovetail create_finger_joint
+    ].freeze
+
     def initialize(executor:, resources: nil)
       @executor = executor
       @resources = resources || -> { [] }
@@ -53,7 +58,21 @@ module SU_MCP
       error_response(-32_602, error.message, request['id'])
     rescue UnknownCommand => error
       error_response(-32_601, error.message, request['id'])
+    rescue CommandExecutionError => error
+      execution_error_response(
+        error.message, error.kind, command, request['id'], error.details
+      )
     rescue StandardError => error
+      return execution_error_response(
+        'Ruby evaluation failed', 'evaluation_error', command, request['id']
+      ) if command == 'eval_ruby'
+      return execution_error_response(
+        'SketchUp joinery execution failed',
+        'joinery_execution_error',
+        command,
+        request['id']
+      ) if JOINERY_COMMANDS.include?(command)
+
       error_response(-32_603, error.message, request['id'])
     end
 
@@ -73,12 +92,21 @@ module SU_MCP
       { jsonrpc: '2.0', result: result, id: id }
     end
 
-    def error_response(code, message, id)
+    def error_response(code, message, id, data = {})
       {
         jsonrpc: '2.0',
-        error: { code: code, message: message, data: { success: false } },
+        error: { code: code, message: message, data: { success: false }.merge(data) },
         id: id
       }
+    end
+
+    def execution_error_response(message, kind, command, id, details = {})
+      error_response(
+        -32_603,
+        message,
+        id,
+        { type: kind, command: command }.merge(details)
+      )
     end
   end
 end

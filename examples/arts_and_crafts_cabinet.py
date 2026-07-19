@@ -22,9 +22,8 @@ CABINET_RUBY_CODE = """
 # that can be opened and closed using SketchUp's component functionality
 
 def create_arts_and_crafts_cabinet
-  # Get the active model and start an operation for undo purposes
+  # Get the active model. eval_ruby owns the undoable operation.
   model = Sketchup.active_model
-  model.start_operation("Create Arts and Crafts Cabinet", true)
   
   # Define cabinet dimensions (in inches)
   width = 36
@@ -53,9 +52,6 @@ def create_arts_and_crafts_cabinet
   point = Geom::Point3d.new(0, 0, 0)
   transform = Geom::Transformation.new(point)
   instance = model.active_entities.add_instance(cabinet_def, transform)
-  
-  # End the operation
-  model.commit_operation
   
   # Return the component instance ID
   return instance.entityID
@@ -311,4 +307,4 @@ def main():
     logger.info("Example completed.")
 
 if __name__ == "__main__":
-    main() 
+    main()

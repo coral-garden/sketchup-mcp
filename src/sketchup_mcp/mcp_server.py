@@ -14,8 +14,8 @@ logger = logging.getLogger("SketchupMCPServer")
 
 
 @dataclass(frozen=True)
-class SceneGeometryTools:
-    """Carry a scene or geometry command across the bridge seam."""
+class CommandForwarder:
+    """Carry one public command across the bridge seam."""
 
     bridge: BridgeClient
 
@@ -55,7 +55,7 @@ class CreateComponentTool:
             request_id,
         )
         try:
-            result = SceneGeometryTools(self.bridge).call(
+            result = CommandForwarder(self.bridge).call(
                 command="create_component",
                 arguments={
                     "type": component_type,

@@ -72,7 +72,7 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 * `create_mortise_tenon` - Create a mortise-and-tenon joint between two boards
 * `create_dovetail` - Create a dovetail joint between two boards
 * `create_finger_joint` - Create a finger joint between two boards
-* `eval_ruby` - Execute arbitrary Ruby code in SketchUp for advanced operations
+* `eval_ruby` - Execute trusted local Ruby code with JSON-safe results. Snippets must not call `start_operation`, `commit_operation`, or `abort_operation`; the command owns rollback and commit.
 
 ### Example Commands
 

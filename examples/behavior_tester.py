@@ -18,7 +18,6 @@ logger = logging.getLogger("BehaviorTester")
 BEHAVIOR_TEST_CODE = """
 # Create a new model context
 model = Sketchup.active_model
-model.start_operation("Test Component Behavior", true)
 
 # Create a new component definition
 definition = model.definitions.add("Test Component")
@@ -78,9 +77,6 @@ for prop in properties_to_test
     }
   end
 end
-
-# End the operation
-model.commit_operation
 
 # Return the results
 {
@@ -145,4 +141,4 @@ def main():
     logger.info("Testing completed.")
 
 if __name__ == "__main__":
-    main() 
+    main()

@@ -74,8 +74,8 @@ else:
 
 2. **Error Handling**: Ruby errors will be caught and returned in the response. Check the `success` field to determine if the code executed successfully.
 
-3. **Model Operations**: For operations that modify the model, consider wrapping them in `model.start_operation` and `model.commit_operation` to make them undoable.
+3. **Model Operations**: Do not start, commit, or abort an operation inside the snippet. `eval_ruby` owns one undoable operation and rolls it back when evaluation fails.
 
 4. **Performance**: For complex operations, it's more efficient to send a single large Ruby script than many small ones.
 
-5. **Security**: Be careful when evaluating user-provided Ruby code, as it has full access to the SketchUp API. 
+5. **Security**: Be careful when evaluating user-provided Ruby code, as it has full access to the SketchUp API.

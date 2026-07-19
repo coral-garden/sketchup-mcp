@@ -1,4 +1,5 @@
 require_relative 'command_catalog'
+require_relative 'command_execution_error'
 
 
 module SU_MCP
@@ -8,7 +9,11 @@ module SU_MCP
       'delete_component' => 'Delete component',
       'transform_component' => 'Transform component',
       'set_material' => 'Set material',
-      'boolean_operation' => 'Boolean operation'
+      'boolean_operation' => 'Boolean operation',
+      'create_mortise_tenon' => 'Create mortise and tenon',
+      'create_dovetail' => 'Create dovetail',
+      'create_finger_joint' => 'Create finger joint',
+      'eval_ruby' => 'Evaluate Ruby'
     }.freeze
     COMMON_COLORS = %w[
       red green blue yellow cyan turquoise magenta purple white black brown orange gray grey
@@ -95,6 +100,44 @@ module SU_MCP
       end
     end
 
+    def create_mortise_tenon(mortise_id:, tenon_id:, **joint)
+      model = active_model
+      require_joinery_entities(model, mortise_id, tenon_id)
+      mutate('create_mortise_tenon', model) do
+        plain_result(
+          @commands.create_mortise_tenon(
+            mortise_id: mortise_id, tenon_id: tenon_id, **joint
+          )
+        )
+      end
+    end
+
+    def create_dovetail(tail_id:, pin_id:, **joint)
+      model = active_model
+      require_joinery_entities(model, tail_id, pin_id)
+      mutate('create_dovetail', model) do
+        plain_result(
+          @commands.create_dovetail(tail_id: tail_id, pin_id: pin_id, **joint)
+        )
+      end
+    end
+
+    def create_finger_joint(board1_id:, board2_id:, **joint)
+      model = active_model
+      require_joinery_entities(model, board1_id, board2_id)
+      mutate('create_finger_joint', model) do
+        plain_result(
+          @commands.create_finger_joint(
+            board1_id: board1_id, board2_id: board2_id, **joint
+          )
+        )
+      end
+    end
+
+    def eval_ruby(code:)
+      mutate('eval_ruby') { plain_result(@commands.eval_ruby(code: code)) }
+    end
+
     def execute(name, arguments)
       raise UnknownCommand, "Unknown command: #{name}" unless @commands.command?(name)
 
@@ -109,14 +152,19 @@ module SU_MCP
 
     def mutate(name, model = active_model)
       started = false
+      finalized = false
       model.start_operation(OPERATION_NAMES.fetch(name), true)
       started = true
       result = yield
       model.commit_operation
+      finalized = true
       result
-    rescue StandardError
+    rescue StandardError, ScriptError
       model.abort_operation if started
+      finalized = true
       raise
+    ensure
+      model.abort_operation if started && !finalized
     end
 
     def active_model
@@ -128,6 +176,38 @@ module SU_MCP
       raise "Entity not found: #{id}" unless entity
 
       entity
+    end
+
+    def require_joinery_entities(model, *ids)
+      entities = ids.map do |id|
+        entity = require_entity(model, id)
+        supported = entity.respond_to?(:manifold?) && entity.manifold? &&
+                    entity.respond_to?(:subtract) && entity.respond_to?(:union)
+        next entity if supported
+
+        raise CommandExecutionError.new(
+          'Joinery requires solid groups or component instances',
+          kind: 'unsupported_entity',
+          details: { entity_id: id }
+        )
+      end
+      parents = entities.map do |entity|
+        entity.parent if entity.respond_to?(:parent)
+      end.compact
+      if parents.length == entities.length && parents.uniq.length > 1
+        raise CommandExecutionError.new(
+          'Joinery entities must share a modeling context',
+          kind: 'incompatible_entity_context'
+        )
+      end
+      entities
+    rescue CommandExecutionError
+      raise
+    rescue StandardError
+      raise CommandExecutionError.new(
+        'Joinery entity was not found',
+        kind: 'entity_not_found'
+      )
     end
 
     def require_material(model, material)
@@ -144,6 +224,10 @@ module SU_MCP
                else
                  @commands.call(name, arguments)
                end
+      plain_result(result)
+    end
+
+    def plain_result(result)
       success = result.key?(:success) ? result[:success] : result['success']
       raise 'Operation failed' unless success
 

@@ -115,18 +115,19 @@
     {
       "name": "create_mortise_tenon",
       "description": "Create a mortise and matching tenon between two boards.",
+      "constraints": {"distinct_arguments": [["mortise_id", "tenon_id"]]},
       "arguments": {
         "required": {
           "mortise_id": {"type": "entity_id", "description": "SketchUp entity ID of the board receiving the mortise."},
           "tenon_id": {"type": "entity_id", "description": "SketchUp entity ID of the board receiving the tenon."}
         },
         "optional": {
-          "width": {"type": "number", "description": "Joint width in model units.", "default": 1.0},
-          "height": {"type": "number", "description": "Joint height in model units.", "default": 1.0},
-          "depth": {"type": "number", "description": "Joint depth in model units.", "default": 1.0},
-          "offset_x": {"type": "number", "description": "Joint offset along x.", "default": 0.0},
-          "offset_y": {"type": "number", "description": "Joint offset along y.", "default": 0.0},
-          "offset_z": {"type": "number", "description": "Joint offset along z.", "default": 0.0}
+          "width": {"type": "number", "description": "Joint width in model units.", "finite": true, "positive": true, "default": 1.0},
+          "height": {"type": "number", "description": "Joint height in model units.", "finite": true, "positive": true, "default": 1.0},
+          "depth": {"type": "number", "description": "Joint depth in model units.", "finite": true, "positive": true, "default": 1.0},
+          "offset_x": {"type": "number", "description": "Joint offset along x.", "finite": true, "default": 0.0},
+          "offset_y": {"type": "number", "description": "Joint offset along y.", "finite": true, "default": 0.0},
+          "offset_z": {"type": "number", "description": "Joint offset along z.", "finite": true, "default": 0.0}
         }
       },
       "success": {"description": "Returns the modified mortise and tenon board entity IDs.", "fields": {"mortise_id": "integer", "tenon_id": "integer"}},
@@ -135,20 +136,21 @@
     {
       "name": "create_dovetail",
       "description": "Create matching dovetail tails and pins between two boards.",
+      "constraints": {"distinct_arguments": [["tail_id", "pin_id"]]},
       "arguments": {
         "required": {
           "tail_id": {"type": "entity_id", "description": "SketchUp entity ID of the tail board."},
           "pin_id": {"type": "entity_id", "description": "SketchUp entity ID of the pin board."}
         },
         "optional": {
-          "width": {"type": "number", "description": "Tail width in model units.", "default": 1.0},
-          "height": {"type": "number", "description": "Tail height in model units.", "default": 1.0},
-          "depth": {"type": "number", "description": "Joint depth in model units.", "default": 1.0},
-          "angle": {"type": "number", "description": "Dovetail angle in degrees.", "default": 15.0},
-          "num_tails": {"type": "integer", "description": "Number of tails and matching pins.", "default": 3},
-          "offset_x": {"type": "number", "description": "Joint offset along x.", "default": 0.0},
-          "offset_y": {"type": "number", "description": "Joint offset along y.", "default": 0.0},
-          "offset_z": {"type": "number", "description": "Joint offset along z.", "default": 0.0}
+          "width": {"type": "number", "description": "Tail width in model units.", "finite": true, "positive": true, "default": 1.0},
+          "height": {"type": "number", "description": "Tail height in model units.", "finite": true, "positive": true, "default": 1.0},
+          "depth": {"type": "number", "description": "Joint depth in model units.", "finite": true, "positive": true, "default": 1.0},
+          "angle": {"type": "number", "description": "Dovetail angle in degrees, greater than 0 and less than 90.", "finite": true, "exclusive_minimum": 0, "exclusive_maximum": 90, "default": 15.0},
+          "num_tails": {"type": "integer", "description": "Number of tails and matching pins.", "positive": true, "default": 3},
+          "offset_x": {"type": "number", "description": "Joint offset along x.", "finite": true, "default": 0.0},
+          "offset_y": {"type": "number", "description": "Joint offset along y.", "finite": true, "default": 0.0},
+          "offset_z": {"type": "number", "description": "Joint offset along z.", "finite": true, "default": 0.0}
         }
       },
       "success": {"description": "Returns the modified tail and pin board entity IDs.", "fields": {"tail_id": "integer", "pin_id": "integer"}},
@@ -157,19 +159,20 @@
     {
       "name": "create_finger_joint",
       "description": "Create matching fingers and slots between two boards.",
+      "constraints": {"distinct_arguments": [["board1_id", "board2_id"]]},
       "arguments": {
         "required": {
           "board1_id": {"type": "entity_id", "description": "SketchUp entity ID of the board receiving fingers."},
           "board2_id": {"type": "entity_id", "description": "SketchUp entity ID of the board receiving slots."}
         },
         "optional": {
-          "width": {"type": "number", "description": "Finger width in model units.", "default": 1.0},
-          "height": {"type": "number", "description": "Finger height in model units.", "default": 1.0},
-          "depth": {"type": "number", "description": "Joint depth in model units.", "default": 1.0},
-          "num_fingers": {"type": "integer", "description": "Number of fingers and matching slots.", "default": 5},
-          "offset_x": {"type": "number", "description": "Joint offset along x.", "default": 0.0},
-          "offset_y": {"type": "number", "description": "Joint offset along y.", "default": 0.0},
-          "offset_z": {"type": "number", "description": "Joint offset along z.", "default": 0.0}
+          "width": {"type": "number", "description": "Finger width in model units.", "finite": true, "positive": true, "default": 1.0},
+          "height": {"type": "number", "description": "Finger height in model units.", "finite": true, "positive": true, "default": 1.0},
+          "depth": {"type": "number", "description": "Joint depth in model units.", "finite": true, "positive": true, "default": 1.0},
+          "num_fingers": {"type": "integer", "description": "Number of fingers and matching slots.", "positive": true, "default": 5},
+          "offset_x": {"type": "number", "description": "Joint offset along x.", "finite": true, "default": 0.0},
+          "offset_y": {"type": "number", "description": "Joint offset along y.", "finite": true, "default": 0.0},
+          "offset_z": {"type": "number", "description": "Joint offset along z.", "finite": true, "default": 0.0}
         }
       },
       "success": {"description": "Returns the modified board entity IDs.", "fields": {"board1_id": "integer", "board2_id": "integer"}},
@@ -180,11 +183,11 @@
       "description": "Evaluate Ruby source in SketchUp's top-level binding.",
       "arguments": {
         "required": {
-          "code": {"type": "string", "description": "Ruby source code to evaluate."}
+          "code": {"type": "string", "description": "Ruby source code to evaluate. Snippets must not manage SketchUp operations.", "min_length": 1, "forbidden_substrings": ["start_operation", "commit_operation", "abort_operation"]}
         },
         "optional": {}
       },
-      "success": {"description": "Returns the evaluated value converted to a string.", "fields": {"result": "string"}},
+      "success": {"description": "Returns the evaluated value normalized to JSON-safe data and its Ruby type.", "fields": {"result": "json", "result_type": "string"}},
       "failures": ["invalid_arguments", "execution_error"]
     }
   ]
