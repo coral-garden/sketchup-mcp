@@ -5,130 +5,19 @@
   "module": "sketchup_mcp.server",
   "object": "mcp",
   "tools": [
-    {
-      "name": "create_component",
-      "description": "Create a new component in Sketchup",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "description": "Type of component to create",
-            "default": "cube"
-          },
-          "position": {
-            "type": "array",
-            "items": {
-              "type": "number"
-            },
-            "description": "Position [x,y,z] of the component",
-            "default": [0,0,0]
-          },
-          "dimensions": {
-            "type": "array",
-            "items": {
-              "type": "number"
-            },
-            "description": "Dimensions [width,height,depth] of the component",
-            "default": [1,1,1]
-          }
-        }
-      }
-    },
-    {
-      "name": "delete_component",
-      "description": "Delete a component by ID",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "ID of the component to delete"
-          }
-        },
-        "required": ["id"]
-      }
-    },
-    {
-      "name": "transform_component",
-      "description": "Transform a component's position, rotation, or scale",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "ID of the component to transform"
-          },
-          "position": {
-            "type": "array",
-            "items": {
-              "type": "number"
-            },
-            "description": "New position [x,y,z]"
-          },
-          "rotation": {
-            "type": "array",
-            "items": {
-              "type": "number"
-            },
-            "description": "New rotation [x,y,z] in degrees"
-          },
-          "scale": {
-            "type": "array",
-            "items": {
-              "type": "number"
-            },
-            "description": "New scale [x,y,z]"
-          }
-        },
-        "required": ["id"]
-      }
-    },
-    {
-      "name": "get_selection",
-      "description": "Get currently selected components",
-      "parameters": {
-        "type": "object",
-        "properties": {}
-      }
-    },
-    {
-      "name": "set_material",
-      "description": "Set material for a component",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "ID of the component"
-          },
-          "material": {
-            "type": "string",
-            "description": "Name of the material to apply"
-          }
-        },
-        "required": ["id", "material"]
-      }
-    },
-    {
-      "name": "export_scene",
-      "description": "Export the current scene",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "format": {
-            "type": "string",
-            "description": "Export format (e.g. skp, obj, etc)",
-            "default": "skp"
-          }
-        }
-      }
-    }
+    {"name":"create_component","description":"Create a grouped primitive in the active SketchUp model.","parameters":{"type":"object","properties":{"type":{"type":"string","description":"Primitive type: cube, cylinder, sphere, or cone.","enum":["cube","cylinder","sphere","cone"],"default":"cube"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"Origin as [x, y, z] in model units.","default":[0,0,0]},"dimensions":{"type":"array","items":{"type":"number","exclusiveMinimum":0},"minItems":3,"maxItems":3,"description":"Width, depth, and height in model units.","default":[1,1,1]}},"required":[],"additionalProperties":false}},
+    {"name":"delete_component","description":"Delete one entity from the active SketchUp model.","parameters":{"type":"object","properties":{"id":{"anyOf":[{"type":"integer","minimum":1},{"type":"string","pattern":"^(?:0*[1-9][0-9]*)$"}],"description":"SketchUp entity ID to delete."}},"required":["id"],"additionalProperties":false}},
+    {"name":"transform_component","description":"Move, rotate, or scale an entity in the active SketchUp model.","parameters":{"type":"object","properties":{"id":{"anyOf":[{"type":"integer","minimum":1},{"type":"string","pattern":"^(?:0*[1-9][0-9]*)$"}],"description":"SketchUp entity ID to transform."},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"Translation as [x, y, z] in model units."},"rotation":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"Rotation about x, y, and z in degrees."},"scale":{"type":"array","items":{"type":"number","exclusiveMinimum":0},"minItems":3,"maxItems":3,"description":"Scale factors along x, y, and z."}},"required":["id"],"additionalProperties":false}},
+    {"name":"get_selection","description":"List the entities currently selected in SketchUp.","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}},
+    {"name":"set_material","description":"Apply a named material or hexadecimal color to an entity.","parameters":{"type":"object","properties":{"id":{"anyOf":[{"type":"integer","minimum":1},{"type":"string","pattern":"^(?:0*[1-9][0-9]*)$"}],"description":"SketchUp entity ID to receive the material."},"material":{"type":"string","description":"Existing material name, common color name, or #RRGGBB color.","minLength":1}},"required":["id","material"],"additionalProperties":false}},
+    {"name":"export_scene","description":"Export the active model to a temporary file.","parameters":{"type":"object","properties":{"format":{"type":"string","description":"Export format: skp, obj, dae, stl, png, jpg, or jpeg.","enum":["skp","obj","dae","stl","png","jpg","jpeg"],"default":"skp"}},"required":[],"additionalProperties":false}},
+    {"name":"boolean_operation","description":"Create the union, difference, or intersection of two grouped entities.","parameters":{"type":"object","properties":{"operation":{"type":"string","description":"Operation: union, difference, or intersection.","enum":["union","difference","intersection"]},"target_id":{"anyOf":[{"type":"integer","minimum":1},{"type":"string","pattern":"^(?:0*[1-9][0-9]*)$"}],"description":"SketchUp entity ID of the target solid."},"tool_id":{"anyOf":[{"type":"integer","minimum":1},{"type":"string","pattern":"^(?:0*[1-9][0-9]*)$"}],"description":"SketchUp entity ID of the tool solid."},"delete_originals":{"type":"boolean","description":"Delete both source entities after a successful operation.","default":false}},"required":["operation","target_id","tool_id"],"additionalProperties":false}},
+    {"name":"create_mortise_tenon","description":"Create a mortise and matching tenon between two boards.","parameters":{"type":"object","properties":{"mortise_id":{"anyOf":[{"type":"integer","minimum":1},{"type":"string","pattern":"^(?:0*[1-9][0-9]*)$"}],"description":"SketchUp entity ID of the board receiving the mortise."},"tenon_id":{"anyOf":[{"type":"integer","minimum":1},{"type":"string","pattern":"^(?:0*[1-9][0-9]*)$"}],"description":"SketchUp entity ID of the board receiving the tenon."},"width":{"type":"number","description":"Joint width in model units.","default":1.0},"height":{"type":"number","description":"Joint height in model units.","default":1.0},"depth":{"type":"number","description":"Joint depth in model units.","default":1.0},"offset_x":{"type":"number","description":"Joint offset along x.","default":0.0},"offset_y":{"type":"number","description":"Joint offset along y.","default":0.0},"offset_z":{"type":"number","description":"Joint offset along z.","default":0.0}},"required":["mortise_id","tenon_id"],"additionalProperties":false}},
+    {"name":"create_dovetail","description":"Create matching dovetail tails and pins between two boards.","parameters":{"type":"object","properties":{"tail_id":{"anyOf":[{"type":"integer","minimum":1},{"type":"string","pattern":"^(?:0*[1-9][0-9]*)$"}],"description":"SketchUp entity ID of the tail board."},"pin_id":{"anyOf":[{"type":"integer","minimum":1},{"type":"string","pattern":"^(?:0*[1-9][0-9]*)$"}],"description":"SketchUp entity ID of the pin board."},"width":{"type":"number","description":"Tail width in model units.","default":1.0},"height":{"type":"number","description":"Tail height in model units.","default":1.0},"depth":{"type":"number","description":"Joint depth in model units.","default":1.0},"angle":{"type":"number","description":"Dovetail angle in degrees.","default":15.0},"num_tails":{"type":"integer","description":"Number of tails and matching pins.","default":3},"offset_x":{"type":"number","description":"Joint offset along x.","default":0.0},"offset_y":{"type":"number","description":"Joint offset along y.","default":0.0},"offset_z":{"type":"number","description":"Joint offset along z.","default":0.0}},"required":["tail_id","pin_id"],"additionalProperties":false}},
+    {"name":"create_finger_joint","description":"Create matching fingers and slots between two boards.","parameters":{"type":"object","properties":{"board1_id":{"anyOf":[{"type":"integer","minimum":1},{"type":"string","pattern":"^(?:0*[1-9][0-9]*)$"}],"description":"SketchUp entity ID of the board receiving fingers."},"board2_id":{"anyOf":[{"type":"integer","minimum":1},{"type":"string","pattern":"^(?:0*[1-9][0-9]*)$"}],"description":"SketchUp entity ID of the board receiving slots."},"width":{"type":"number","description":"Finger width in model units.","default":1.0},"height":{"type":"number","description":"Finger height in model units.","default":1.0},"depth":{"type":"number","description":"Joint depth in model units.","default":1.0},"num_fingers":{"type":"integer","description":"Number of fingers and matching slots.","default":5},"offset_x":{"type":"number","description":"Joint offset along x.","default":0.0},"offset_y":{"type":"number","description":"Joint offset along y.","default":0.0},"offset_z":{"type":"number","description":"Joint offset along z.","default":0.0}},"required":["board1_id","board2_id"],"additionalProperties":false}},
+    {"name":"eval_ruby","description":"Evaluate Ruby source in SketchUp's top-level binding.","parameters":{"type":"object","properties":{"code":{"type":"string","description":"Ruby source code to evaluate."}},"required":["code"],"additionalProperties":false}}
   ],
   "mcpServers": {
-    "sketchup": {
-      "command": "uvx",
-      "args": ["sketchup_mcp"]
-    }
+    "sketchup": {"command": "uvx", "args": ["sketchup_mcp"]}
   }
-} 
+}

@@ -5,7 +5,8 @@ from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncIterator, Dict, Any, Iterator, List
 
 from .bridge import BridgeClient
-from .mcp_server import CreateComponentTool
+from .catalog_fastmcp import CatalogFastMCP
+from .mcp_server import CreateComponentTool, SceneGeometryTools
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -41,6 +42,24 @@ def use_bridge_client(client: BridgeClient) -> Iterator[None]:
         _bridge_client = previous
 
 
+def call_scene_geometry_tool(
+    request_id: Any,
+    command: str,
+    arguments: dict[str, Any],
+    failure_action: str,
+) -> str:
+    """Serialize a bridge result while retaining the public tool error wording."""
+
+    try:
+        return SceneGeometryTools(get_bridge_client()).call(
+            command,
+            arguments,
+            request_id=request_id,
+        )
+    except Exception as error:
+        return f"Error {failure_action}: {error}"
+
+
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
     """Manage server startup and shutdown lifecycle"""
@@ -53,11 +72,24 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
         _bridge_client = None
         logger.info("SketchupMCP server shut down")
 
+# The scene/geometry family is catalog-governed while the remaining handlers are
+# migrated independently by the next command-family issue.
+SCENE_GEOMETRY_COMMANDS = (
+    "create_component",
+    "delete_component",
+    "transform_component",
+    "get_selection",
+    "set_material",
+    "export_scene",
+    "boolean_operation",
+)
+
 # Create MCP server with lifespan support
-mcp = FastMCP(
+mcp = CatalogFastMCP(
     "SketchupMCP",
     instructions="Sketchup integration through the Model Context Protocol",
-    lifespan=server_lifespan
+    lifespan=server_lifespan,
+    catalog_commands=SCENE_GEOMETRY_COMMANDS,
 )
 
 # Tool endpoints
@@ -79,94 +111,56 @@ def create_component(
 @mcp.tool()
 def delete_component(
     ctx: Context,
-    id: str
+    id: int | str
 ) -> str:
     """Delete a component by ID"""
-    try:
-        sketchup = get_bridge_client()
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "delete_component",
-                "arguments": {"id": id}
-            },
-            request_id=ctx.request_id
-        )
-        return json.dumps(result)
-    except Exception as e:
-        return f"Error deleting component: {str(e)}"
+    return call_scene_geometry_tool(
+        ctx.request_id, "delete_component", {"id": id}, "deleting component"
+    )
 
 @mcp.tool()
 def transform_component(
     ctx: Context,
-    id: str,
+    id: int | str,
     position: List[float] = None,
     rotation: List[float] = None,
     scale: List[float] = None
 ) -> str:
     """Transform a component's position, rotation, or scale"""
-    try:
-        sketchup = get_bridge_client()
-        arguments = {"id": id}
-        if position is not None:
-            arguments["position"] = position
-        if rotation is not None:
-            arguments["rotation"] = rotation
-        if scale is not None:
-            arguments["scale"] = scale
-            
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "transform_component",
-                "arguments": arguments
-            },
-            request_id=ctx.request_id
-        )
-        return json.dumps(result)
-    except Exception as e:
-        return f"Error transforming component: {str(e)}"
+    arguments = {"id": id}
+    if position is not None:
+        arguments["position"] = position
+    if rotation is not None:
+        arguments["rotation"] = rotation
+    if scale is not None:
+        arguments["scale"] = scale
+    return call_scene_geometry_tool(
+        ctx.request_id,
+        "transform_component",
+        arguments,
+        "transforming component",
+    )
 
 @mcp.tool()
 def get_selection(ctx: Context) -> str:
     """Get currently selected components"""
-    try:
-        sketchup = get_bridge_client()
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "get_selection",
-                "arguments": {}
-            },
-            request_id=ctx.request_id
-        )
-        return json.dumps(result)
-    except Exception as e:
-        return f"Error getting selection: {str(e)}"
+    return call_scene_geometry_tool(
+        ctx.request_id, "get_selection", {}, "getting selection"
+    )
 
 @mcp.tool()
 def set_material(
     ctx: Context,
-    id: str,
+    id: int | str,
     material: str
 ) -> str:
     """Set material for a component"""
-    try:
-        sketchup = get_bridge_client()
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "set_material",
-                "arguments": {
-                    "id": id,
-                    "material": material
-                }
-            },
-            request_id=ctx.request_id
-        )
-        return json.dumps(result)
-    except Exception as e:
-        return f"Error setting material: {str(e)}"
+    return call_scene_geometry_tool(
+        ctx.request_id,
+        "set_material",
+        {"id": id, "material": material},
+        "setting material",
+    )
 
 @mcp.tool()
 def export_scene(
@@ -174,21 +168,34 @@ def export_scene(
     format: str = "skp"
 ) -> str:
     """Export the current scene"""
-    try:
-        sketchup = get_bridge_client()
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "export_scene",
-                "arguments": {
-                    "format": format
-                }
-            },
-            request_id=ctx.request_id
-        )
-        return json.dumps(result)
-    except Exception as e:
-        return f"Error exporting scene: {str(e)}"
+    return call_scene_geometry_tool(
+        ctx.request_id,
+        "export_scene",
+        {"format": format},
+        "exporting scene",
+    )
+
+
+@mcp.tool()
+def boolean_operation(
+    ctx: Context,
+    operation: str,
+    target_id: int | str,
+    tool_id: int | str,
+    delete_originals: bool = False,
+) -> str:
+    """Create the union, difference, or intersection of two solid groups."""
+    return call_scene_geometry_tool(
+        ctx.request_id,
+        "boolean_operation",
+        {
+            "operation": operation,
+            "target_id": target_id,
+            "tool_id": tool_id,
+            "delete_originals": delete_originals,
+        },
+        "performing boolean operation",
+    )
 
 @mcp.tool()
 def create_mortise_tenon(

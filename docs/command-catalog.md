@@ -15,8 +15,6 @@ The accepted public command names are:
 - `set_material`
 - `export_scene`
 - `boolean_operation`
-- `chamfer_edges`
-- `fillet_edges`
 - `create_mortise_tenon`
 - `create_dovetail`
 - `create_finger_joint`
@@ -48,5 +46,10 @@ PYTHONPATH=src python -m sketchup_mcp.command_parity .
 
 Add `--json` for machine-readable output. The command exits zero only when the
 Python MCP server, Ruby extension, `sketchup.json`, and README all use the
-canonical names. It currently exits one by design: later migration tickets use
-the report as their checklist and make each consumer converge independently.
+canonical names. The Ruby runtime loads the catalog's explicit executable
+`export` compatibility alias separately from the canonical public inventory, so
+compatibility does not appear as a second public command.
+
+`chamfer_edges` and `fillet_edges` are deliberately absent. Their former Ruby
+implementations could report success without producing valid chamfered or filleted
+topology; real topology-aware commands require separate contracts and features.

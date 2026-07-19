@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
 import json
+import math
+import re
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -18,6 +20,7 @@ class ArgumentContract:
     type: str
     description: str
     default: Any = None
+    constraints: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,7 @@ class CommandCatalog:
     schema_version: int
     commands: tuple[CommandContract, ...]
     renamed_commands: Mapping[str, str]
+    executable_aliases: Mapping[str, str]
     success_envelope: Mapping[str, Any]
     failure_semantics: Mapping[str, Mapping[str, Any]]
 
@@ -51,6 +55,10 @@ class CommandCatalog:
             if command.name == name:
                 return command
         raise KeyError(name)
+
+
+class InvalidCommandArguments(ValueError):
+    """Raw MCP arguments do not satisfy an authored command contract."""
 
 
 def _freeze(value: Any) -> Any:
@@ -67,6 +75,13 @@ def _argument(name: str, value: Mapping[str, Any]) -> ArgumentContract:
         type=value["type"],
         description=value["description"],
         default=_freeze(value.get("default")),
+        constraints=_freeze(
+            {
+                key: item
+                for key, item in value.items()
+                if key not in {"type", "description", "default"}
+            }
+        ),
     )
 
 
@@ -98,6 +113,13 @@ def _validate(raw: Mapping[str, Any]) -> None:
     }
     if invalid_renames:
         raise ValueError(f"Invalid command renames: {invalid_renames}")
+    invalid_aliases = {
+        old: new
+        for old, new in raw["executable_aliases"].items()
+        if raw["renamed_commands"].get(old) != new
+    }
+    if invalid_aliases:
+        raise ValueError(f"Invalid executable aliases: {invalid_aliases}")
 
 
 @lru_cache(maxsize=1)
@@ -129,6 +151,189 @@ def load_command_catalog() -> CommandCatalog:
         schema_version=raw["schema_version"],
         commands=commands,
         renamed_commands=_freeze(raw["renamed_commands"]),
+        executable_aliases=_freeze(raw["executable_aliases"]),
         success_envelope=_freeze(raw["success_envelope"]),
         failure_semantics=_freeze(raw["failure_semantics"]),
     )
+
+
+def manifest_tools(catalog: CommandCatalog | None = None) -> list[dict[str, Any]]:
+    """Derive manifest tool schemas from the authoritative command catalog."""
+
+    accepted = catalog or load_command_catalog()
+    return [
+        {
+            "name": command.name,
+            "description": command.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    argument.name: _json_schema(argument, optional=False)
+                    for argument in command.required_arguments
+                }
+                | {
+                    argument.name: _json_schema(argument, optional=True)
+                    for argument in command.optional_arguments
+                },
+                "required": [
+                    argument.name for argument in command.required_arguments
+                ],
+                "additionalProperties": False,
+            },
+        }
+        for command in accepted.commands
+    ]
+
+
+def validate_command_arguments(
+    command_name: str,
+    arguments: Mapping[str, Any],
+    catalog: CommandCatalog | None = None,
+) -> None:
+    """Validate raw MCP arguments before a command handler can coerce them."""
+
+    accepted = catalog or load_command_catalog()
+    try:
+        command = accepted.command(command_name)
+    except KeyError as error:
+        raise InvalidCommandArguments(f"unknown command {command_name!r}") from error
+
+    required = {argument.name: argument for argument in command.required_arguments}
+    optional = {argument.name: argument for argument in command.optional_arguments}
+    known_names = required.keys() | optional.keys()
+    unknown_names = sorted(arguments.keys() - known_names)
+    if unknown_names:
+        raise InvalidCommandArguments(
+            "unknown argument" + ("s" if len(unknown_names) != 1 else "") + ": "
+            + ", ".join(unknown_names)
+        )
+
+    missing_names = sorted(required.keys() - arguments.keys())
+    if missing_names:
+        raise InvalidCommandArguments(
+            "missing required argument"
+            + ("s" if len(missing_names) != 1 else "")
+            + ": "
+            + ", ".join(missing_names)
+        )
+
+    contracts = required | optional
+    for name, value in arguments.items():
+        _validate_argument(name, value, contracts[name])
+
+
+def _validate_argument(name: str, value: Any, contract: ArgumentContract) -> None:
+    constraints = contract.constraints or {}
+    valid = True
+    if contract.type == "entity_id":
+        valid = (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and value >= 1
+        ) or (
+            isinstance(value, str)
+            and re.fullmatch(r"0*[1-9][0-9]*", value) is not None
+        )
+    elif contract.type == "number[3]":
+        valid = (
+            isinstance(value, list)
+            and len(value) == 3
+            and all(_is_finite_number(item) for item in value)
+            and (
+                not constraints.get("positive")
+                or all(item > 0 for item in value)
+            )
+        )
+    elif contract.type == "integer[]":
+        valid = isinstance(value, list) and all(
+            isinstance(item, int) and not isinstance(item, bool) for item in value
+        )
+    elif contract.type == "string":
+        valid = isinstance(value, str)
+    elif contract.type == "number":
+        valid = _is_finite_number(value)
+    elif contract.type == "integer":
+        valid = isinstance(value, int) and not isinstance(value, bool)
+    elif contract.type == "boolean":
+        valid = isinstance(value, bool)
+    else:
+        valid = False
+
+    if not valid:
+        raise InvalidCommandArguments(
+            f"argument {name!r} must be {contract.type}"
+        )
+    if (
+        constraints.get("positive")
+        and contract.type in {"number", "integer"}
+        and value <= 0
+    ):
+        raise InvalidCommandArguments(f"argument {name!r} must be positive")
+    if "enum" in constraints and value not in constraints["enum"]:
+        raise InvalidCommandArguments(
+            f"argument {name!r} must be one of: "
+            + ", ".join(str(item) for item in constraints["enum"])
+        )
+    if "min_length" in constraints and len(value) < constraints["min_length"]:
+        raise InvalidCommandArguments(
+            f"argument {name!r} must contain at least "
+            f"{constraints['min_length']} character(s)"
+        )
+
+
+def _is_finite_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _json_schema(argument: ArgumentContract, optional: bool) -> dict[str, Any]:
+    constraints = argument.constraints or {}
+    if argument.type == "entity_id":
+        schema: dict[str, Any] = {
+            "anyOf": [
+                {"type": "integer", "minimum": 1},
+                {"type": "string", "pattern": "^(?:0*[1-9][0-9]*)$"},
+            ]
+        }
+    elif argument.type == "number[3]":
+        items: dict[str, Any] = {"type": "number"}
+        if constraints.get("positive"):
+            items["exclusiveMinimum"] = 0
+        schema = {
+            "type": "array",
+            "items": items,
+            "minItems": 3,
+            "maxItems": 3,
+        }
+    elif argument.type == "integer[]":
+        schema = {"type": "array", "items": {"type": "integer"}}
+    else:
+        schema = {
+            "type": {
+                "string": "string",
+                "number": "number",
+                "integer": "integer",
+                "boolean": "boolean",
+            }[argument.type]
+        }
+    schema["description"] = argument.description
+    if constraints.get("positive") and argument.type in {"number", "integer"}:
+        schema["exclusiveMinimum"] = 0
+    if "enum" in constraints:
+        schema["enum"] = list(constraints["enum"])
+    if "min_length" in constraints:
+        schema["minLength"] = constraints["min_length"]
+    if optional and argument.default is not None:
+        schema["default"] = _json_value(argument.default)
+    return schema
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, tuple):
+        return [_json_value(item) for item in value]
+    if isinstance(value, Mapping):
+        return {key: _json_value(item) for key, item in value.items()}
+    return value

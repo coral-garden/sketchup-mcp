@@ -62,13 +62,16 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 
 #### Tools
 
-* `get_scene_info` - Gets information about the current Sketchup scene
-* `get_selected_components` - Gets information about currently selected components
 * `create_component` - Create a new component with specified parameters
 * `delete_component` - Remove a component from the scene
 * `transform_component` - Move, rotate, or scale a component
+* `get_selection` - Get the entities currently selected in SketchUp
 * `set_material` - Apply materials to components
 * `export_scene` - Export the current scene to various formats
+* `boolean_operation` - Create a union, difference, or intersection of two solid groups
+* `create_mortise_tenon` - Create a mortise-and-tenon joint between two boards
+* `create_dovetail` - Create a dovetail joint between two boards
+* `create_finger_joint` - Create a finger joint between two boards
 * `eval_ruby` - Execute arbitrary Ruby code in SketchUp for advanced operations
 
 ### Example Commands
@@ -92,10 +95,20 @@ Here are some examples of what you can ask Claude to do:
 
 ### Communication Protocol
 
-The system uses a simple JSON-based protocol over TCP sockets:
+The MCP server sends one newline-terminated JSON-RPC `tools/call` request per
+loopback bridge connection:
 
-* **Commands** are sent as JSON objects with a `type` and optional `params`
-* **Responses** are JSON objects with a `status` and `result` or `message`
+```json
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_selection","arguments":{}},"id":17}
+```
+
+A successful response preserves the request ID and carries a success envelope.
+Its text is the exact plain command result serialized as JSON; `resourceId` is
+present only for commands whose catalog contract declares one.
+
+```json
+{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"{\"entities\":[]}"}],"isError":false,"success":true},"id":17}
+```
 
 ## Contributing
 
@@ -103,4 +116,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-MIT 
+MIT

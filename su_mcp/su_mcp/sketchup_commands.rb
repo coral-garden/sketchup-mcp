@@ -1,9 +1,11 @@
 require 'json'
 require 'fileutils'
+require 'tmpdir'
+require 'tempfile'
 
 module SU_MCP
-  # Transitional home for unchanged SketchUp operations. Issues #9, #10, and #11
-  # split these command families after the runtime seam is established here.
+  # SketchUp API implementation retained behind the adapter seam while issues
+  # #10 and #11 migrate the remaining command families.
   class SketchupCommands
     COMMAND_METHODS = {
       'create_component' => :create_component,
@@ -13,23 +15,23 @@ module SU_MCP
       'export_scene' => :export_scene,
       'set_material' => :set_material,
       'boolean_operation' => :boolean_operation,
-      'chamfer_edges' => :chamfer_edges,
-      'fillet_edges' => :fillet_edges,
       'create_mortise_tenon' => :create_mortise_tenon,
       'create_dovetail' => :create_dovetail,
       'create_finger_joint' => :create_finger_joint,
       'eval_ruby' => :eval_ruby
     }.freeze
 
-    def initialize(logger: nil)
+    def initialize(logger: nil, model: nil)
       @logger = logger || ->(_message) {}
+      @model = model
     end
 
-    def call(name, arguments)
+    def call(name, arguments, solid_method: nil)
       command_method = COMMAND_METHODS[name]
       raise ArgumentError, "Unknown command: #{name}" unless command_method
 
       return send(command_method) if command_method == :get_selection
+      return boolean_operation(arguments || {}, solid_method: solid_method) if command_method == :boolean_operation
 
       send(command_method, arguments || {})
     end
@@ -39,7 +41,7 @@ module SU_MCP
     end
 
     def list_resources
-      model = Sketchup.active_model
+      model = @model || Sketchup.active_model
       return [] unless model
 
       model.entities.map do |entity|
@@ -55,7 +57,7 @@ module SU_MCP
 
     def create_component(params)
       log "Creating component with params: #{params.inspect}"
-      model = Sketchup.active_model
+      model = @model || Sketchup.active_model
       log "Got active model: #{model.inspect}"
       entities = model.active_entities
       log "Got active entities: #{entities.inspect}"
@@ -252,7 +254,7 @@ module SU_MCP
     end
 
     def delete_component(params)
-      model = Sketchup.active_model
+      model = @model || Sketchup.active_model
 
       # Handle ID format - strip quotes if present
       id_str = params["id"].to_s.gsub('"', '')
@@ -270,7 +272,7 @@ module SU_MCP
     end
 
     def transform_component(params)
-      model = Sketchup.active_model
+      model = @model || Sketchup.active_model
 
       # Handle ID format - strip quotes if present
       id_str = params["id"].to_s.gsub('"', '')
@@ -336,7 +338,7 @@ module SU_MCP
     end
 
     def get_selection
-      model = Sketchup.active_model
+      model = @model || Sketchup.active_model
       selection = model.selection
 
       log "Getting selection, count: #{selection.length}"
@@ -353,7 +355,7 @@ module SU_MCP
 
     def export_scene(params)
       log "Exporting scene with params: #{params.inspect}"
-      model = Sketchup.active_model
+      model = @model || Sketchup.active_model
 
       format = params["format"] || "skp"
 
@@ -361,66 +363,54 @@ module SU_MCP
         # Create a temporary directory for exports
         temp_dir = File.join(ENV['TEMP'] || ENV['TMP'] || Dir.tmpdir, "sketchup_exports")
         FileUtils.mkdir_p(temp_dir) unless Dir.exist?(temp_dir)
+        export_dir = Dir.mktmpdir('sketchup_export_', temp_dir)
 
-        # Generate a unique filename
-        timestamp = Time.now.strftime("%Y%m%d_%H%M%S")
-        filename = "sketchup_export_#{timestamp}"
+        extension = format == 'jpg' ? 'jpeg' : format
+        reservation = Tempfile.new(['model_', ".#{extension}"], export_dir)
+        export_path = reservation.path
+        reservation.close
+        reservation.unlink
 
         case format.downcase
         when "skp"
           # Export as SketchUp file
-          export_path = File.join(temp_dir, "#{filename}.skp")
           log "Exporting to SketchUp file: #{export_path}"
-          model.save(export_path)
+          unless model.respond_to?(:save_copy) && model.save_copy(export_path)
+            raise 'SketchUp save-copy failed'
+          end
 
         when "obj"
           # Export as OBJ file
-          export_path = File.join(temp_dir, "#{filename}.obj")
           log "Exporting to OBJ file: #{export_path}"
 
           # Check if OBJ exporter is available
-          if Sketchup.require("sketchup.rb")
-            options = {
-              :triangulated_faces => true,
-              :double_sided_faces => true,
-              :edges => false,
-              :texture_maps => true
-            }
-            model.export(export_path, options)
-          else
-            raise "OBJ exporter not available"
-          end
+          options = {
+            :triangulated_faces => true,
+            :double_sided_faces => true,
+            :edges => false,
+            :texture_maps => true
+          }
+          raise 'OBJ export failed' unless model.export(export_path, options)
 
         when "dae"
           # Export as COLLADA file
-          export_path = File.join(temp_dir, "#{filename}.dae")
           log "Exporting to COLLADA file: #{export_path}"
 
           # Check if COLLADA exporter is available
-          if Sketchup.require("sketchup.rb")
-            options = { :triangulated_faces => true }
-            model.export(export_path, options)
-          else
-            raise "COLLADA exporter not available"
-          end
+          options = { :triangulated_faces => true }
+          raise 'COLLADA export failed' unless model.export(export_path, options)
 
         when "stl"
           # Export as STL file
-          export_path = File.join(temp_dir, "#{filename}.stl")
           log "Exporting to STL file: #{export_path}"
 
           # Check if STL exporter is available
-          if Sketchup.require("sketchup.rb")
-            options = { :units => "model" }
-            model.export(export_path, options)
-          else
-            raise "STL exporter not available"
-          end
+          options = { :units => "model" }
+          raise 'STL export failed' unless model.export(export_path, options)
 
         when "png", "jpg", "jpeg"
           # Export as image
-          ext = format.downcase == "jpg" ? "jpeg" : format.downcase
-          export_path = File.join(temp_dir, "#{filename}.#{ext}")
+          ext = extension
           log "Exporting to image file: #{export_path}"
 
           # Get the current view
@@ -436,7 +426,7 @@ module SU_MCP
           }
 
           # Export the image
-          view.write_image(options)
+          raise 'image export failed' unless view.write_image(options)
 
         else
           raise "Unsupported export format: #{format}"
@@ -450,6 +440,7 @@ module SU_MCP
           format: format
         }
       rescue StandardError => e
+        FileUtils.rm_rf(export_dir) if defined?(export_dir) && export_dir
         log "Error in export_scene: #{e.message}"
         log e.backtrace.join("\n")
         raise
@@ -458,7 +449,7 @@ module SU_MCP
 
     def set_material(params)
       log "Setting material with params: #{params.inspect}"
-      model = Sketchup.active_model
+      model = @model || Sketchup.active_model
 
       # Handle ID format - strip quotes if present
       id_str = params["id"].to_s.gsub('"', '')
@@ -536,25 +527,13 @@ module SU_MCP
       end
     end
 
-    def boolean_operation(params)
+    def boolean_operation(params, solid_method:)
       log "Performing boolean operation with params: #{params.inspect}"
-      model = Sketchup.active_model
-
-      # Get operation type
+      model = @model || Sketchup.active_model
       operation_type = params["operation"]
-      unless ["union", "difference", "intersection"].include?(operation_type)
-        raise "Invalid boolean operation: #{operation_type}. Must be 'union', 'difference', or 'intersection'."
-      end
-
-      # Get target and tool entities
-      target_id = params["target_id"].to_s.gsub('"', '')
-      tool_id = params["tool_id"].to_s.gsub('"', '')
-
-      log "Looking for target entity with ID: #{target_id}"
-      target_entity = model.find_entity_by_id(target_id.to_i)
-
-      log "Looking for tool entity with ID: #{tool_id}"
-      tool_entity = model.find_entity_by_id(tool_id.to_i)
+      raise "SketchUp solid #{operation_type} is unavailable" unless solid_method
+      target_entity = model.find_entity_by_id(params["target_id"])
+      tool_entity = model.find_entity_by_id(params["tool_id"])
 
       unless target_entity && tool_entity
         missing = []
@@ -563,404 +542,29 @@ module SU_MCP
         raise "Entity not found: #{missing.join(', ')}"
       end
 
-      # Ensure both entities are groups or component instances
-      unless (target_entity.is_a?(Sketchup::Group) || target_entity.is_a?(Sketchup::ComponentInstance)) &&
-             (tool_entity.is_a?(Sketchup::Group) || tool_entity.is_a?(Sketchup::ComponentInstance))
-        raise "Boolean operations require groups or component instances"
+      [target_entity, tool_entity].each do |entity|
+        unless entity.respond_to?(:manifold?) && entity.manifold? && entity.respond_to?(:copy)
+          raise 'Boolean operations require solid groups'
+        end
       end
 
-      # Create a new group to hold the result
-      result_group = model.active_entities.add_group
-
-      # Perform the boolean operation
-      case operation_type
-      when "union"
-        log "Performing union operation"
-        perform_union(target_entity, tool_entity, result_group)
-      when "difference"
-        log "Performing difference operation"
-        perform_difference(target_entity, tool_entity, result_group)
-      when "intersection"
-        log "Performing intersection operation"
-        perform_intersection(target_entity, tool_entity, result_group)
+      target_copy = target_entity.copy
+      tool_copy = tool_entity.copy
+      unless target_copy.respond_to?(solid_method)
+        raise "SketchUp solid #{operation_type} is unavailable"
       end
+      result_group = target_copy.public_send(solid_method, tool_copy)
+      raise "SketchUp solid #{operation_type} failed" unless result_group
 
-      # Clean up original entities if requested
       if params["delete_originals"]
         target_entity.erase! if target_entity.valid?
         tool_entity.erase! if tool_entity.valid?
       end
-
-      # Return the result
-      {
-        success: true,
-        id: result_group.entityID
-      }
-    end
-
-    def perform_union(target, tool, result_group)
-      model = Sketchup.active_model
-
-      # Create temporary copies of the target and tool
-      target_copy = target.copy
-      tool_copy = tool.copy
-
-      # Get the transformation of each entity
-      target_transform = target.transformation
-      tool_transform = tool.transformation
-
-      # Apply the transformations to the copies
-      target_copy.transform!(target_transform)
-      tool_copy.transform!(tool_transform)
-
-      # Get the entities from the copies
-      target_entities = target_copy.is_a?(Sketchup::Group) ? target_copy.entities : target_copy.definition.entities
-      tool_entities = tool_copy.is_a?(Sketchup::Group) ? tool_copy.entities : tool_copy.definition.entities
-
-      # Copy all entities from target to result
-      target_entities.each do |entity|
-        entity.copy(result_group.entities)
+      [target_copy, tool_copy].each do |copy|
+        copy.erase! if !copy.equal?(result_group) && copy.respond_to?(:valid?) && copy.valid?
       end
 
-      # Copy all entities from tool to result
-      tool_entities.each do |entity|
-        entity.copy(result_group.entities)
-      end
-
-      # Clean up temporary copies
-      target_copy.erase!
-      tool_copy.erase!
-
-      # Outer shell - this will merge overlapping geometry
-      result_group.entities.outer_shell
-    end
-
-    def perform_difference(target, tool, result_group)
-      model = Sketchup.active_model
-
-      # Create temporary copies of the target and tool
-      target_copy = target.copy
-      tool_copy = tool.copy
-
-      # Get the transformation of each entity
-      target_transform = target.transformation
-      tool_transform = tool.transformation
-
-      # Apply the transformations to the copies
-      target_copy.transform!(target_transform)
-      tool_copy.transform!(tool_transform)
-
-      # Get the entities from the copies
-      target_entities = target_copy.is_a?(Sketchup::Group) ? target_copy.entities : target_copy.definition.entities
-      tool_entities = tool_copy.is_a?(Sketchup::Group) ? tool_copy.entities : tool_copy.definition.entities
-
-      # Copy all entities from target to result
-      target_entities.each do |entity|
-        entity.copy(result_group.entities)
-      end
-
-      # Create a temporary group for the tool
-      temp_tool_group = model.active_entities.add_group
-
-      # Copy all entities from tool to temp group
-      tool_entities.each do |entity|
-        entity.copy(temp_tool_group.entities)
-      end
-
-      # Subtract the tool from the result
-      result_group.entities.subtract(temp_tool_group.entities)
-
-      # Clean up temporary copies and groups
-      target_copy.erase!
-      tool_copy.erase!
-      temp_tool_group.erase!
-    end
-
-    def perform_intersection(target, tool, result_group)
-      model = Sketchup.active_model
-
-      # Create temporary copies of the target and tool
-      target_copy = target.copy
-      tool_copy = tool.copy
-
-      # Get the transformation of each entity
-      target_transform = target.transformation
-      tool_transform = tool.transformation
-
-      # Apply the transformations to the copies
-      target_copy.transform!(target_transform)
-      tool_copy.transform!(tool_transform)
-
-      # Get the entities from the copies
-      target_entities = target_copy.is_a?(Sketchup::Group) ? target_copy.entities : target_copy.definition.entities
-      tool_entities = tool_copy.is_a?(Sketchup::Group) ? tool_copy.entities : tool_copy.definition.entities
-
-      # Create temporary groups for target and tool
-      temp_target_group = model.active_entities.add_group
-      temp_tool_group = model.active_entities.add_group
-
-      # Copy all entities from target and tool to temp groups
-      target_entities.each do |entity|
-        entity.copy(temp_target_group.entities)
-      end
-
-      tool_entities.each do |entity|
-        entity.copy(temp_tool_group.entities)
-      end
-
-      # Perform the intersection
-      result_group.entities.intersect_with(temp_target_group.entities, temp_tool_group.entities)
-
-      # Clean up temporary copies and groups
-      target_copy.erase!
-      tool_copy.erase!
-      temp_target_group.erase!
-      temp_tool_group.erase!
-    end
-
-    def chamfer_edges(params)
-      log "Chamfering edges with params: #{params.inspect}"
-      model = Sketchup.active_model
-
-      # Get entity ID
-      entity_id = params["entity_id"].to_s.gsub('"', '')
-      log "Looking for entity with ID: #{entity_id}"
-
-      entity = model.find_entity_by_id(entity_id.to_i)
-      unless entity
-        raise "Entity not found: #{entity_id}"
-      end
-
-      # Ensure entity is a group or component instance
-      unless entity.is_a?(Sketchup::Group) || entity.is_a?(Sketchup::ComponentInstance)
-        raise "Chamfer operation requires a group or component instance"
-      end
-
-      # Get the distance parameter
-      distance = params["distance"] || 0.5
-
-      # Get the entities collection
-      entities = entity.is_a?(Sketchup::Group) ? entity.entities : entity.definition.entities
-
-      # Find all edges in the entity
-      edges = entities.grep(Sketchup::Edge)
-
-      # If specific edges are provided, filter the edges
-      if params["edge_indices"] && params["edge_indices"].is_a?(Array)
-        edge_indices = params["edge_indices"]
-        edges = edges.select.with_index { |_, i| edge_indices.include?(i) }
-      end
-
-      # Create a new group to hold the result
-      result_group = model.active_entities.add_group
-
-      # Copy all entities from the original to the result
-      entities.each do |e|
-        e.copy(result_group.entities)
-      end
-
-      # Get the edges in the result group
-      result_edges = result_group.entities.grep(Sketchup::Edge)
-
-      # If specific edges were provided, filter the result edges
-      if params["edge_indices"] && params["edge_indices"].is_a?(Array)
-        edge_indices = params["edge_indices"]
-        result_edges = result_edges.select.with_index { |_, i| edge_indices.include?(i) }
-      end
-
-      # Perform the chamfer operation
-      begin
-        # Create a transformation for the chamfer
-        chamfer_transform = Geom::Transformation.scaling(1.0 - distance)
-
-        # For each edge, create a chamfer
-        result_edges.each do |edge|
-          # Get the faces connected to this edge
-          faces = edge.faces
-          next if faces.length < 2
-
-          # Get the start and end points of the edge
-          start_point = edge.start.position
-          end_point = edge.end.position
-
-          # Calculate the midpoint of the edge
-          midpoint = Geom::Point3d.new(
-            (start_point.x + end_point.x) / 2.0,
-            (start_point.y + end_point.y) / 2.0,
-            (start_point.z + end_point.z) / 2.0
-          )
-
-          # Create a chamfer by creating a new face
-          # This is a simplified approach - in a real implementation,
-          # you would need to handle various edge cases
-          new_points = []
-
-          # For each vertex of the edge
-          [edge.start, edge.end].each do |vertex|
-            # Get all edges connected to this vertex
-            connected_edges = vertex.edges - [edge]
-
-            # For each connected edge
-            connected_edges.each do |connected_edge|
-              # Get the other vertex of the connected edge
-              other_vertex = (connected_edge.vertices - [vertex])[0]
-
-              # Calculate a point along the connected edge
-              direction = other_vertex.position - vertex.position
-              new_point = vertex.position.offset(direction, distance)
-
-              new_points << new_point
-            end
-          end
-
-          # Create a new face using the new points
-          if new_points.length >= 3
-            result_group.entities.add_face(new_points)
-          end
-        end
-
-        # Clean up the original entity if requested
-        if params["delete_original"]
-          entity.erase! if entity.valid?
-        end
-
-        # Return the result
-        {
-          success: true,
-          id: result_group.entityID
-        }
-      rescue StandardError => e
-        log "Error in chamfer_edges: #{e.message}"
-        log e.backtrace.join("\n")
-
-        # Clean up the result group if there was an error
-        result_group.erase! if result_group.valid?
-
-        raise
-      end
-    end
-
-    def fillet_edges(params)
-      log "Filleting edges with params: #{params.inspect}"
-      model = Sketchup.active_model
-
-      # Get entity ID
-      entity_id = params["entity_id"].to_s.gsub('"', '')
-      log "Looking for entity with ID: #{entity_id}"
-
-      entity = model.find_entity_by_id(entity_id.to_i)
-      unless entity
-        raise "Entity not found: #{entity_id}"
-      end
-
-      # Ensure entity is a group or component instance
-      unless entity.is_a?(Sketchup::Group) || entity.is_a?(Sketchup::ComponentInstance)
-        raise "Fillet operation requires a group or component instance"
-      end
-
-      # Get the radius parameter
-      radius = params["radius"] || 0.5
-
-      # Get the number of segments for the fillet
-      segments = params["segments"] || 8
-
-      # Get the entities collection
-      entities = entity.is_a?(Sketchup::Group) ? entity.entities : entity.definition.entities
-
-      # Find all edges in the entity
-      edges = entities.grep(Sketchup::Edge)
-
-      # If specific edges are provided, filter the edges
-      if params["edge_indices"] && params["edge_indices"].is_a?(Array)
-        edge_indices = params["edge_indices"]
-        edges = edges.select.with_index { |_, i| edge_indices.include?(i) }
-      end
-
-      # Create a new group to hold the result
-      result_group = model.active_entities.add_group
-
-      # Copy all entities from the original to the result
-      entities.each do |e|
-        e.copy(result_group.entities)
-      end
-
-      # Get the edges in the result group
-      result_edges = result_group.entities.grep(Sketchup::Edge)
-
-      # If specific edges were provided, filter the result edges
-      if params["edge_indices"] && params["edge_indices"].is_a?(Array)
-        edge_indices = params["edge_indices"]
-        result_edges = result_edges.select.with_index { |_, i| edge_indices.include?(i) }
-      end
-
-      # Perform the fillet operation
-      begin
-        # For each edge, create a fillet
-        result_edges.each do |edge|
-          # Get the faces connected to this edge
-          faces = edge.faces
-          next if faces.length < 2
-
-          # Get the start and end points of the edge
-          start_point = edge.start.position
-          end_point = edge.end.position
-
-          # Calculate the midpoint of the edge
-          midpoint = Geom::Point3d.new(
-            (start_point.x + end_point.x) / 2.0,
-            (start_point.y + end_point.y) / 2.0,
-            (start_point.z + end_point.z) / 2.0
-          )
-
-          # Calculate the edge vector
-          edge_vector = end_point - start_point
-          edge_length = edge_vector.length
-
-          # Create points for the fillet curve
-          fillet_points = []
-
-          # Create a series of points along a circular arc
-          (0..segments).each do |i|
-            angle = Math::PI * i / segments
-
-            # Calculate the point on the arc
-            x = midpoint.x + radius * Math.cos(angle)
-            y = midpoint.y + radius * Math.sin(angle)
-            z = midpoint.z
-
-            fillet_points << Geom::Point3d.new(x, y, z)
-          end
-
-          # Create edges connecting the fillet points
-          (0...fillet_points.length - 1).each do |i|
-            result_group.entities.add_line(fillet_points[i], fillet_points[i+1])
-          end
-
-          # Create a face from the fillet points
-          if fillet_points.length >= 3
-            result_group.entities.add_face(fillet_points)
-          end
-        end
-
-        # Clean up the original entity if requested
-        if params["delete_original"]
-          entity.erase! if entity.valid?
-        end
-
-        # Return the result
-        {
-          success: true,
-          id: result_group.entityID
-        }
-      rescue StandardError => e
-        log "Error in fillet_edges: #{e.message}"
-        log e.backtrace.join("\n")
-
-        # Clean up the result group if there was an error
-        result_group.erase! if result_group.valid?
-
-        raise
-      end
+      { success: true, id: result_group.entityID }
     end
 
     def create_mortise_tenon(params)

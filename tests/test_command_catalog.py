@@ -12,6 +12,51 @@ SRC_ROOT = REPO_ROOT / "src"
 
 
 class CommandCatalogTests(unittest.TestCase):
+    def test_argument_validation_supports_scalar_positive_constraints(self):
+        from sketchup_mcp.command_catalog import (
+            ArgumentContract,
+            CommandCatalog,
+            CommandContract,
+            InvalidCommandArguments,
+            manifest_tools,
+            validate_command_arguments,
+        )
+
+        catalog = CommandCatalog(
+            schema_version=1,
+            commands=(
+                CommandContract(
+                    name="positive_number",
+                    description="A future catalog constraint fixture.",
+                    required_arguments=(
+                        ArgumentContract(
+                            name="amount",
+                            type="number",
+                            description="A positive amount.",
+                            constraints={"positive": True},
+                        ),
+                    ),
+                    optional_arguments=(),
+                    success={},
+                    failures=(),
+                ),
+            ),
+            renamed_commands={},
+            executable_aliases={},
+            success_envelope={},
+            failure_semantics={},
+        )
+
+        validate_command_arguments("positive_number", {"amount": 0.5}, catalog)
+        with self.assertRaisesRegex(InvalidCommandArguments, "must be positive"):
+            validate_command_arguments("positive_number", {"amount": 0}, catalog)
+        self.assertEqual(
+            0,
+            manifest_tools(catalog)[0]["parameters"]["properties"]["amount"][
+                "exclusiveMinimum"
+            ],
+        )
+
     def test_catalog_is_complete_and_loads_without_runtime_dependencies(self):
         script = """
 import json
@@ -61,8 +106,6 @@ print(json.dumps({
                     "set_material",
                     "export_scene",
                     "boolean_operation",
-                    "chamfer_edges",
-                    "fillet_edges",
                     "create_mortise_tenon",
                     "create_dovetail",
                     "create_finger_joint",
@@ -101,14 +144,6 @@ print(json.dumps({
                 "boolean_operation": (
                     ("operation", "target_id", "tool_id"),
                     ("delete_originals",),
-                ),
-                "chamfer_edges": (
-                    ("entity_id",),
-                    ("distance", "edge_indices", "delete_original"),
-                ),
-                "fillet_edges": (
-                    ("entity_id",),
-                    ("radius", "segments", "edge_indices", "delete_original"),
                 ),
                 "create_mortise_tenon": (
                     ("mortise_id", "tenon_id"),
@@ -153,6 +188,7 @@ print(json.dumps({
             catalog.renamed_commands,
             {"export": "export_scene", "get_selected_components": "get_selection"},
         )
+        self.assertEqual({"export": "export_scene"}, catalog.executable_aliases)
         self.assertEqual(
             {
                 name: semantics["jsonrpc_code"]
@@ -180,8 +216,6 @@ print(json.dumps({
                 "get_selection",
                 "set_material",
                 "boolean_operation",
-                "chamfer_edges",
-                "fillet_edges",
                 "create_mortise_tenon",
                 "create_dovetail",
                 "create_finger_joint",
@@ -204,6 +238,17 @@ print(json.dumps({
                 set(report.as_dict()),
                 {"consumer", "in_sync", "missing", "extra", "differently_named"},
             )
+            self.assertEqual((), report.missing, report.as_dict())
+            self.assertEqual((), report.extra, report.as_dict())
+        for report in reports:
+            self.assertTrue(report.in_sync, report.as_dict())
+
+    def test_manifest_contract_is_derived_from_the_authoritative_catalog(self):
+        from sketchup_mcp.command_catalog import manifest_tools
+
+        manifest = json.loads((REPO_ROOT / "sketchup.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest_tools(), manifest["tools"])
 
     def test_parity_verifier_cli_returns_machine_readable_failure(self):
         environment = os.environ.copy()

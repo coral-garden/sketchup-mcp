@@ -1,0 +1,68 @@
+{
+  "commands": [
+    {
+      "name": "create_component",
+      "arguments": {"type": "cube", "position": [1, 2, 3], "dimensions": [4, 5, 6]},
+      "command_result": {"id": 731},
+      "wire_result": {"content": [{"type": "text", "text": "{\"id\":731}"}], "isError": false, "success": true, "resourceId": 731},
+      "request_id": "scene-create-1",
+      "resource_id": 731
+    },
+    {
+      "name": "delete_component",
+      "arguments": {"id": "731"},
+      "command_result": {},
+      "wire_result": {"content": [{"type": "text", "text": "{}"}], "isError": false, "success": true},
+      "request_id": 2
+    },
+    {
+      "name": "transform_component",
+      "arguments": {"id": 731, "position": [7, 8, 9], "rotation": [0, 45, 90], "scale": [1, 2, 3]},
+      "command_result": {"id": 731},
+      "wire_result": {"content": [{"type": "text", "text": "{\"id\":731}"}], "isError": false, "success": true, "resourceId": 731},
+      "request_id": null,
+      "resource_id": 731
+    },
+    {
+      "name": "get_selection",
+      "arguments": {},
+      "command_result": {"entities": [{"id": 731, "type": "group"}]},
+      "wire_result": {"content": [{"type": "text", "text": "{\"entities\":[{\"id\":731,\"type\":\"group\"}]}"}], "isError": false, "success": true},
+      "request_id": "scene-selection-4"
+    },
+    {
+      "name": "set_material",
+      "arguments": {"id": 731, "material": "#ff8800"},
+      "command_result": {"id": 731},
+      "wire_result": {"content": [{"type": "text", "text": "{\"id\":731}"}], "isError": false, "success": true, "resourceId": 731},
+      "request_id": 5,
+      "resource_id": 731
+    },
+    {
+      "name": "export_scene",
+      "arguments": {"format": "obj"},
+      "command_result": {"path": "/tmp/sketchup_exports/scene.obj", "format": "obj"},
+      "wire_result": {"content": [{"type": "text", "text": "{\"path\":\"/tmp/sketchup_exports/scene.obj\",\"format\":\"obj\"}"}], "isError": false, "success": true},
+      "request_id": "scene-export-6"
+    },
+    {
+      "name": "boolean_operation",
+      "arguments": {"operation": "union", "target_id": 731, "tool_id": 732, "delete_originals": true},
+      "command_result": {"id": 733},
+      "wire_result": {"content": [{"type": "text", "text": "{\"id\":733}"}], "isError": false, "success": true, "resourceId": 733},
+      "request_id": 7,
+      "resource_id": 733
+    }
+  ],
+  "invalid_arguments": [
+    {"name": "create_component", "arguments": {"dimensions": [1, 0, 1]}, "contains": "dimensions"},
+    {"name": "create_component", "arguments": {"position": [0, 0, "far"]}, "contains": "position"},
+    {"name": "delete_component", "arguments": {"id": "7.31"}, "contains": "id"},
+    {"name": "transform_component", "arguments": {"id": 731, "scale": [1, -1, 1]}, "contains": "scale"},
+    {"name": "set_material", "arguments": {"id": 731, "material": ""}, "contains": "material"},
+    {"name": "export_scene", "arguments": {"format": "SKP"}, "contains": "format"},
+    {"name": "boolean_operation", "arguments": {"operation": "merge", "target_id": 731, "tool_id": 732}, "contains": "operation"},
+    {"name": "boolean_operation", "arguments": {"operation": "union", "target_id": 731, "tool_id": 732, "delete_originals": 1}, "contains": "delete_originals"},
+    {"name": "get_selection", "arguments": {"extra": true}, "contains": "unknown argument"}
+  ]
+}

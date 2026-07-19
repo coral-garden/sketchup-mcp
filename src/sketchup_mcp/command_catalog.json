@@ -18,6 +18,9 @@
     "export": "export_scene",
     "get_selected_components": "get_selection"
   },
+  "executable_aliases": {
+    "export": "export_scene"
+  },
   "commands": [
     {
       "name": "create_component",
@@ -25,9 +28,9 @@
       "arguments": {
         "required": {},
         "optional": {
-          "type": {"type": "string", "description": "Primitive type: cube, cylinder, sphere, or cone.", "default": "cube"},
-          "position": {"type": "number[3]", "description": "Origin as [x, y, z] in model units.", "default": [0, 0, 0]},
-          "dimensions": {"type": "number[3]", "description": "Width, depth, and height in model units.", "default": [1, 1, 1]}
+          "type": {"type": "string", "description": "Primitive type: cube, cylinder, sphere, or cone.", "enum": ["cube", "cylinder", "sphere", "cone"], "default": "cube"},
+          "position": {"type": "number[3]", "description": "Origin as [x, y, z] in model units.", "finite": true, "default": [0, 0, 0]},
+          "dimensions": {"type": "number[3]", "description": "Width, depth, and height in model units.", "finite": true, "positive": true, "default": [1, 1, 1]}
         }
       },
       "success": {"description": "Returns the created group entity ID.", "fields": {"id": "integer"}, "resource_id": "id"},
@@ -53,9 +56,9 @@
           "id": {"type": "entity_id", "description": "SketchUp entity ID to transform."}
         },
         "optional": {
-          "position": {"type": "number[3]", "description": "Translation as [x, y, z] in model units.", "default": null},
-          "rotation": {"type": "number[3]", "description": "Rotation about x, y, and z in degrees.", "default": null},
-          "scale": {"type": "number[3]", "description": "Scale factors along x, y, and z.", "default": null}
+          "position": {"type": "number[3]", "description": "Translation as [x, y, z] in model units.", "finite": true, "default": null},
+          "rotation": {"type": "number[3]", "description": "Rotation about x, y, and z in degrees.", "finite": true, "default": null},
+          "scale": {"type": "number[3]", "description": "Scale factors along x, y, and z.", "finite": true, "positive": true, "default": null}
         }
       },
       "success": {"description": "Returns the transformed entity ID.", "fields": {"id": "integer"}, "resource_id": "id"},
@@ -74,7 +77,7 @@
       "arguments": {
         "required": {
           "id": {"type": "entity_id", "description": "SketchUp entity ID to receive the material."},
-          "material": {"type": "string", "description": "Existing material name, common color name, or #RRGGBB color."}
+          "material": {"type": "string", "description": "Existing material name, common color name, or #RRGGBB color.", "min_length": 1}
         },
         "optional": {}
       },
@@ -87,7 +90,7 @@
       "arguments": {
         "required": {},
         "optional": {
-          "format": {"type": "string", "description": "Export format: skp, obj, dae, stl, png, jpg, or jpeg.", "default": "skp"}
+          "format": {"type": "string", "description": "Export format: skp, obj, dae, stl, png, jpg, or jpeg.", "enum": ["skp", "obj", "dae", "stl", "png", "jpg", "jpeg"], "default": "skp"}
         }
       },
       "success": {"description": "Returns the absolute exported file path and selected format.", "fields": {"path": "string", "format": "string"}},
@@ -98,7 +101,7 @@
       "description": "Create the union, difference, or intersection of two grouped entities.",
       "arguments": {
         "required": {
-          "operation": {"type": "string", "description": "Operation: union, difference, or intersection."},
+          "operation": {"type": "string", "description": "Operation: union, difference, or intersection.", "enum": ["union", "difference", "intersection"]},
           "target_id": {"type": "entity_id", "description": "SketchUp entity ID of the target solid."},
           "tool_id": {"type": "entity_id", "description": "SketchUp entity ID of the tool solid."}
         },
@@ -107,39 +110,6 @@
         }
       },
       "success": {"description": "Returns the new result group entity ID.", "fields": {"id": "integer"}, "resource_id": "id"},
-      "failures": ["invalid_arguments", "execution_error"]
-    },
-    {
-      "name": "chamfer_edges",
-      "description": "Create a chamfered copy of a grouped entity's edges.",
-      "arguments": {
-        "required": {
-          "entity_id": {"type": "entity_id", "description": "SketchUp entity ID of the group or component instance."}
-        },
-        "optional": {
-          "distance": {"type": "number", "description": "Chamfer distance in model units.", "default": 0.5},
-          "edge_indices": {"type": "integer[]", "description": "Zero-based edge indexes to chamfer; all edges when omitted.", "default": null},
-          "delete_original": {"type": "boolean", "description": "Delete the source entity after a successful operation.", "default": false}
-        }
-      },
-      "success": {"description": "Returns the new chamfered group entity ID.", "fields": {"id": "integer"}, "resource_id": "id"},
-      "failures": ["invalid_arguments", "execution_error"]
-    },
-    {
-      "name": "fillet_edges",
-      "description": "Create a rounded copy of a grouped entity's edges.",
-      "arguments": {
-        "required": {
-          "entity_id": {"type": "entity_id", "description": "SketchUp entity ID of the group or component instance."}
-        },
-        "optional": {
-          "radius": {"type": "number", "description": "Fillet radius in model units.", "default": 0.5},
-          "segments": {"type": "integer", "description": "Number of segments used for each fillet arc.", "default": 8},
-          "edge_indices": {"type": "integer[]", "description": "Zero-based edge indexes to fillet; all edges when omitted.", "default": null},
-          "delete_original": {"type": "boolean", "description": "Delete the source entity after a successful operation.", "default": false}
-        }
-      },
-      "success": {"description": "Returns the new filleted group entity ID.", "fields": {"id": "integer"}, "resource_id": "id"},
       "failures": ["invalid_arguments", "execution_error"]
     },
     {

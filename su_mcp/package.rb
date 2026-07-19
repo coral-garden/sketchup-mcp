@@ -17,6 +17,10 @@ FileUtils.mkdir_p(temp_dir)
 FileUtils.cp_r('su_mcp', temp_dir)
 FileUtils.cp('su_mcp.rb', temp_dir)
 FileUtils.cp('extension.json', temp_dir)
+FileUtils.cp(
+  '../src/sketchup_mcp/command_catalog.json',
+  File.join(temp_dir, 'su_mcp', 'command_catalog.json')
+)
 
 # Create zip file
 FileUtils.rm(OUTPUT_NAME) if File.exist?(OUTPUT_NAME)
@@ -32,4 +36,4 @@ end
 # Clean up
 FileUtils.rm_rf(temp_dir)
 
-puts "Created #{OUTPUT_NAME}" 
+puts "Created #{OUTPUT_NAME}"

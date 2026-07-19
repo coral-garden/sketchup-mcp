@@ -9,6 +9,8 @@ from sketchup_mcp.bridge import (
     InMemoryBridgeAdapter,
 )
 from sketchup_mcp.mcp_server import CreateComponentTool
+from sketchup_mcp.mcp_server import SceneGeometryTools
+from sketchup_mcp.command_catalog import manifest_tools
 
 
 CONTRACT = json.loads(
@@ -16,9 +18,256 @@ CONTRACT = json.loads(
         encoding="utf-8"
     )
 )
+SCENE_GEOMETRY_CONTRACT = json.loads(
+    (Path(__file__).parents[1] / "test/fixtures/scene_geometry_contract.json").read_text(
+        encoding="utf-8"
+    )
+)
 
 
 class PythonRuntimeTest(unittest.TestCase):
+    def test_valid_fastmcp_create_component_call_reaches_the_bridge_unchanged(self):
+        from mcp.shared.memory import create_connected_server_and_client_session
+        from sketchup_mcp import server as exported_server
+
+        command = SCENE_GEOMETRY_CONTRACT["commands"][0]
+        adapter = InMemoryBridgeAdapter.returning(command["wire_result"])
+
+        async def call_create_component():
+            with exported_server.use_bridge_client(BridgeClient(adapter=adapter)):
+                async with create_connected_server_and_client_session(
+                    exported_server.mcp
+                ) as session:
+                    return await session.call_tool(
+                        command["name"], command["arguments"]
+                    )
+
+        result = asyncio.run(call_create_component())
+
+        self.assertFalse(result.isError)
+        self.assertEqual(json.dumps(command["wire_result"]), result.content[0].text)
+        self.assertEqual(1, len(adapter.requests))
+        self.assertEqual("tools/call", adapter.requests[0]["method"])
+        self.assertEqual(
+            {
+                "name": "create_component",
+                "arguments": command["arguments"],
+            },
+            adapter.requests[0]["params"],
+        )
+
+    def test_fastmcp_scene_geometry_schemas_match_the_command_catalog(self):
+        from sketchup_mcp import server as exported_server
+
+        command_names = {
+            command["name"] for command in SCENE_GEOMETRY_CONTRACT["commands"]
+        }
+        expected = {
+            tool["name"]: tool["parameters"]
+            for tool in manifest_tools()
+            if tool["name"] in command_names
+        }
+        actual = {
+            tool.name: tool.inputSchema
+            for tool in asyncio.run(exported_server.mcp.list_tools())
+            if tool.name in command_names
+        }
+
+        self.assertEqual(expected, actual)
+        self.assertEqual(
+            ["cube", "cylinder", "sphere", "cone"],
+            actual["create_component"]["properties"]["type"]["enum"],
+        )
+        self.assertEqual(
+            {
+                "type": "array",
+                "items": {"type": "number", "exclusiveMinimum": 0},
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "Width, depth, and height in model units.",
+                "default": [1, 1, 1],
+            },
+            actual["create_component"]["properties"]["dimensions"],
+        )
+        self.assertEqual(
+            {
+                "anyOf": [
+                    {"type": "integer", "minimum": 1},
+                    {
+                        "type": "string",
+                        "pattern": "^(?:0*[1-9][0-9]*)$",
+                    },
+                ],
+                "description": "SketchUp entity ID to delete.",
+            },
+            actual["delete_component"]["properties"]["id"],
+        )
+        self.assertTrue(
+            all(schema["additionalProperties"] is False for schema in actual.values())
+        )
+
+    def test_fastmcp_rejects_invalid_scene_geometry_arguments_before_the_bridge(self):
+        from mcp.shared.exceptions import McpError
+        from mcp.shared.memory import create_connected_server_and_client_session
+        from mcp.types import INVALID_PARAMS
+        from sketchup_mcp import server as exported_server
+
+        invalid_arguments = SCENE_GEOMETRY_CONTRACT["invalid_arguments"] + [
+            {
+                "name": "create_component",
+                "arguments": {"typo": "cube"},
+                "contains": "typo",
+            },
+            {
+                "name": "create_component",
+                "arguments": {"position": [1, 2]},
+                "contains": "position",
+            },
+            {
+                "name": "create_component",
+                "arguments": {"position": [0, float("inf"), 0]},
+                "contains": "position",
+            },
+        ]
+        adapter = InMemoryBridgeAdapter.returning({})
+
+        async def call_invalid_tools():
+            with exported_server.use_bridge_client(BridgeClient(adapter=adapter)):
+                async with create_connected_server_and_client_session(
+                    exported_server.mcp
+                ) as session:
+                    return [
+                        await session.call_tool(case["name"], case["arguments"])
+                        for case in invalid_arguments
+                    ]
+
+        results = asyncio.run(call_invalid_tools())
+
+        for case, result in zip(invalid_arguments, results, strict=True):
+            with self.subTest(command=case["name"], arguments=case["arguments"]):
+                self.assertTrue(result.isError)
+                self.assertIn("Invalid arguments", result.content[0].text)
+                self.assertIn(case["contains"], result.content[0].text)
+        self.assertEqual([], adapter.requests)
+
+        direct_adapter = InMemoryBridgeAdapter.returning({})
+        with exported_server.use_bridge_client(BridgeClient(adapter=direct_adapter)):
+            with self.assertRaises(McpError) as raised:
+                asyncio.run(
+                    exported_server.mcp.call_tool(
+                        "get_selection", {"unknown": "argument"}
+                    )
+                )
+        self.assertEqual(INVALID_PARAMS, raised.exception.error.code)
+        self.assertEqual([], direct_adapter.requests)
+
+    def test_scene_geometry_commands_share_one_bridge_tool_interface(self):
+        for command in SCENE_GEOMETRY_CONTRACT["commands"]:
+            with self.subTest(command=command["name"]):
+                adapter = InMemoryBridgeAdapter.returning(command["wire_result"])
+                tools = SceneGeometryTools(BridgeClient(adapter=adapter))
+
+                result = tools.call(
+                    command["name"],
+                    command["arguments"],
+                    request_id=command["request_id"],
+                )
+
+                self.assertEqual(json.dumps(command["wire_result"]), result)
+                self.assertEqual(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {
+                            "name": command["name"],
+                            "arguments": command["arguments"],
+                        },
+                        "id": command["request_id"],
+                    },
+                    adapter.requests[0],
+                )
+
+    def test_every_exported_scene_geometry_tool_preserves_success_and_remote_errors(self):
+        from sketchup_mcp import server as exported_server
+
+        invocations = {
+            "create_component": lambda server, context, arguments: server.create_component(
+                context,
+                type=arguments["type"],
+                position=arguments["position"],
+                dimensions=arguments["dimensions"],
+            ),
+            "delete_component": lambda server, context, arguments: server.delete_component(
+                context, id=arguments["id"]
+            ),
+            "transform_component": lambda server, context, arguments: server.transform_component(
+                context,
+                id=arguments["id"],
+                position=arguments["position"],
+                rotation=arguments["rotation"],
+                scale=arguments["scale"],
+            ),
+            "get_selection": lambda server, context, _arguments: server.get_selection(
+                context
+            ),
+            "set_material": lambda server, context, arguments: server.set_material(
+                context, id=arguments["id"], material=arguments["material"]
+            ),
+            "export_scene": lambda server, context, arguments: server.export_scene(
+                context, format=arguments["format"]
+            ),
+            "boolean_operation": lambda server, context, arguments: server.boolean_operation(
+                context,
+                operation=arguments["operation"],
+                target_id=arguments["target_id"],
+                tool_id=arguments["tool_id"],
+                delete_originals=arguments["delete_originals"],
+            ),
+        }
+        failure_actions = {
+            "create_component": "creating component",
+            "delete_component": "deleting component",
+            "transform_component": "transforming component",
+            "get_selection": "getting selection",
+            "set_material": "setting material",
+            "export_scene": "exporting scene",
+            "boolean_operation": "performing boolean operation",
+        }
+
+        for command in SCENE_GEOMETRY_CONTRACT["commands"]:
+            with self.subTest(command=command["name"], result="success"):
+                adapter = InMemoryBridgeAdapter.returning(command["wire_result"])
+                context = type(
+                    "RequestContext", (), {"request_id": command["request_id"]}
+                )()
+                with exported_server.use_bridge_client(BridgeClient(adapter=adapter)):
+                    result = invocations[command["name"]](
+                        exported_server, context, command["arguments"]
+                    )
+                self.assertEqual(json.dumps(command["wire_result"]), result)
+
+            with self.subTest(command=command["name"], result="remote-error"):
+                adapter = InMemoryBridgeAdapter(
+                    lambda request: {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32602,
+                            "message": "invalid scene geometry arguments",
+                            "data": {"success": False},
+                        },
+                        "id": request["id"],
+                    }
+                )
+                with exported_server.use_bridge_client(BridgeClient(adapter=adapter)):
+                    result = invocations[command["name"]](
+                        exported_server, context, command["arguments"]
+                    )
+                self.assertEqual(
+                    f"Error {failure_actions[command['name']]}: "
+                    "SketchUp bridge error -32602: invalid scene geometry arguments",
+                    result,
+                )
+
     def test_create_component_succeeds_through_the_bridge_seam(self):
         adapter = InMemoryBridgeAdapter.returning(CONTRACT["success_result"])
         tool = CreateComponentTool(BridgeClient(adapter=adapter))

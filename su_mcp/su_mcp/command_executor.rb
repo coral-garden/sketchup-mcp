@@ -1,60 +1,63 @@
+require_relative 'command_catalog'
+
+
 module SU_MCP
-  class InvalidArguments < StandardError; end
-  class UnknownCommand < StandardError; end
-
   class CommandExecutor
-    COMPONENT_TYPES = %w[cube cylinder sphere cone].freeze
-    RENAMED_COMMANDS = {
-      'export' => 'export_scene'
-    }.freeze
+    Outcome = Struct.new(:result, :resource_id, keyword_init: true)
 
-    def initialize(sketchup:)
+    def initialize(sketchup:, catalog: CommandCatalog.new)
       @sketchup = sketchup
+      @catalog = catalog
     end
 
     def call(name, arguments)
-      canonical_name = RENAMED_COMMANDS.fetch(name, name)
-
-      case canonical_name
-      when 'create_component'
-        create_component(arguments)
-      else
-        @sketchup.execute(canonical_name, arguments)
-      end
+      command = @catalog.command(name)
+      result = execute(command.fetch('name'), @catalog.validate(command, arguments))
+      Outcome.new(
+        result: result,
+        resource_id: @catalog.resource_id(command, result)
+      )
     end
 
     private
 
-    def create_component(arguments)
-      unless arguments.is_a?(Hash)
-        raise InvalidArguments, 'arguments must be an object'
+    def execute(name, arguments)
+      case name
+      when 'create_component'
+        { id: @sketchup.create_component(**keywords(arguments)) }
+      when 'delete_component'
+        @sketchup.delete_component(**keywords(arguments))
+      when 'transform_component'
+        @sketchup.transform_component(**keywords(arguments))
+      when 'get_selection'
+        @sketchup.get_selection
+      when 'set_material'
+        validate_material(arguments.fetch('material'))
+        @sketchup.set_material(**keywords(arguments))
+      when 'export_scene'
+        @sketchup.export_scene(**keywords(arguments))
+      when 'boolean_operation'
+        validate_boolean_entities(arguments)
+        @sketchup.boolean_operation(**keywords(arguments))
+      else
+        @sketchup.execute(name, arguments)
       end
-
-      component_type = arguments.fetch('type', 'cube')
-      unless COMPONENT_TYPES.include?(component_type)
-        raise InvalidArguments,
-              "type must be one of: #{COMPONENT_TYPES.join(', ')}"
-      end
-
-
-      position = vector(arguments.fetch('position', [0, 0, 0]), 'position')
-      dimensions = vector(arguments.fetch('dimensions', [1, 1, 1]), 'dimensions')
-
-      id = @sketchup.create_component(
-        type: component_type,
-        position: position,
-        dimensions: dimensions
-      )
-      { id: id }
     end
 
-    def vector(value, name)
-      valid = value.is_a?(Array) && value.length == 3 && value.all? do |number|
-        number.is_a?(Numeric) && (!number.respond_to?(:finite?) || number.finite?)
-      end
-      raise InvalidArguments, "#{name} must contain exactly three numbers" unless valid
+    def keywords(arguments)
+      arguments.transform_keys(&:to_sym)
+    end
 
-      value
+    def validate_material(material)
+      if material.start_with?('#') && !material.match?(/\A#[0-9a-fA-F]{6}\z/)
+        raise InvalidArguments, 'material hexadecimal colors must use #RRGGBB'
+      end
+    end
+
+    def validate_boolean_entities(arguments)
+      return unless arguments.fetch('target_id') == arguments.fetch('tool_id')
+
+      raise InvalidArguments, 'target_id and tool_id must identify different entities'
     end
   end
 end

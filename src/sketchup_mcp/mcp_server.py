@@ -14,6 +14,28 @@ logger = logging.getLogger("SketchupMCPServer")
 
 
 @dataclass(frozen=True)
+class SceneGeometryTools:
+    """Carry a scene or geometry command across the bridge seam."""
+
+    bridge: BridgeClient
+
+    def call(
+        self,
+        command: str,
+        arguments: dict[str, Any],
+        request_id: Any,
+    ) -> str:
+        """Return the bridge success envelope serialized as JSON."""
+
+        result = self.bridge.send_command(
+            command,
+            arguments,
+            request_id=request_id,
+        )
+        return json.dumps(result)
+
+
+@dataclass(frozen=True)
 class CreateComponentTool:
     """Map create-component inputs and outputs across the SketchUp bridge seam."""
 
@@ -33,9 +55,9 @@ class CreateComponentTool:
             request_id,
         )
         try:
-            result = self.bridge.send_command(
-                "create_component",
-                {
+            result = SceneGeometryTools(self.bridge).call(
+                command="create_component",
+                arguments={
                     "type": component_type,
                     "position": position if position is not None else [0, 0, 0],
                     "dimensions": (
@@ -45,7 +67,7 @@ class CreateComponentTool:
                 request_id=request_id,
             )
             logger.info("create_component completed: request_id=%r", request_id)
-            return json.dumps(result)
+            return result
         except Exception as error:
             logger.error(
                 "create_component failed: request_id=%r, error=%s",

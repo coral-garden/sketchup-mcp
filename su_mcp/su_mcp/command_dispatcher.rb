@@ -1,4 +1,5 @@
 require 'json'
+require_relative 'command_catalog'
 
 
 module SU_MCP
@@ -39,18 +40,15 @@ module SU_MCP
       arguments = params.fetch('arguments', {})
       raise InvalidArguments, 'arguments must be an object' unless arguments.is_a?(Hash)
 
-      command_result = @executor.call(command, arguments)
-      id = command_result[:id]
+      outcome = @executor.call(command, arguments)
+      result = {
+        content: [{ type: 'text', text: JSON.generate(outcome.result) }],
+        isError: false,
+        success: true
+      }
+      result[:resourceId] = outcome.resource_id unless outcome.resource_id.nil?
 
-      success_response(
-        {
-          content: [{ type: 'text', text: JSON.generate(command_result) }],
-          isError: false,
-          success: true,
-          resourceId: id
-        },
-        request['id']
-      )
+      success_response(result, request['id'])
     rescue InvalidArguments => error
       error_response(-32_602, error.message, request['id'])
     rescue UnknownCommand => error
