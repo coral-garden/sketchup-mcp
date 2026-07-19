@@ -17,6 +17,11 @@ dependencies = [
     "mcp[cli]>=1.28.1,<2"
 ]
 
+[dependency-groups]
+test = [
+    "coverage[toml]==7.10.7",
+]
+
 [project.urls]
 Homepage = "https://github.com/yourusername/sketchup-mcp"
 Issues = "https://github.com/yourusername/sketchup-mcp/issues"
@@ -39,3 +44,11 @@ version = {file = ["VERSION"]}
 
 [tool.setuptools.package-data]
 sketchup_mcp = ["command_catalog.json"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/sketchup_mcp"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true

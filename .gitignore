@@ -12,6 +12,10 @@ dist/
 env/
 venv/
 ENV/
+/.coverage
+/.coverage.*
+/coverage.xml
+/htmlcov/
 
 # Ruby
 *.gem

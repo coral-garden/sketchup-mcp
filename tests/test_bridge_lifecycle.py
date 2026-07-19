@@ -197,6 +197,10 @@ class RubyCloseBridgeFixture:
             )
 
 
+@unittest.skipIf(
+    os.environ.get("SKETCHUP_MCP_DETERMINISTIC_TESTS") == "1",
+    "real TCP and Ruby lifecycle integration tests are outside the coverage target",
+)
 class BridgeLifecycleTest(unittest.TestCase):
     def test_request_and_response_are_newline_framed_and_preserve_id(self):
         with ScriptedBridge([send_result({"ok": True})]) as bridge:

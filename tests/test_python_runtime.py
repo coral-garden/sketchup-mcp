@@ -45,6 +45,10 @@ def call_create_component(client, request_id, **arguments):
 
 
 class PythonRuntimeTest(unittest.TestCase):
+    @unittest.skipIf(
+        os.environ.get("SKETCHUP_MCP_DETERMINISTIC_TESTS") == "1",
+        "real stdio-to-Ruby integration is outside the coverage target",
+    )
     def test_stdio_mcp_entrypoint_executes_through_the_real_ruby_bridge(self):
         commands = (
             SCENE_GEOMETRY_CONTRACT["commands"]

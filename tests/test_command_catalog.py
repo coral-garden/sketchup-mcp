@@ -238,6 +238,10 @@ print(json.dumps({
         )
         self.assertFalse(report.in_sync)
 
+    @unittest.skipIf(
+        os.environ.get("SKETCHUP_MCP_DETERMINISTIC_TESTS") == "1",
+        "live Ruby consumer parity is outside the coverage target",
+    )
     def test_repository_parity_classifies_each_consumer_report(self):
         from sketchup_mcp.command_parity import inspect_repository
 
@@ -289,6 +293,10 @@ print(json.dumps({
             write_documents(fixture)
             self.assertTrue(check_documents(fixture))
 
+    @unittest.skipIf(
+        os.environ.get("SKETCHUP_MCP_DETERMINISTIC_TESTS") == "1",
+        "live Ruby consumer parity is outside the coverage target",
+    )
     def test_parity_verifier_cli_returns_machine_readable_failure(self):
         environment = os.environ.copy()
         environment["PYTHONPATH"] = str(SRC_ROOT)

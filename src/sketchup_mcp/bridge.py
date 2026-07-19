@@ -170,7 +170,9 @@ class BridgeClient:
             raise ValueError("max_attempts must be at least 1")
         request_payload = json.dumps(request).encode("utf-8")
         adapter = self.adapter
-        for attempt in range(1, self.max_attempts + 1):
+        # A successful exchange breaks and a failed final attempt raises, so a
+        # constructed, non-empty integer attempt range cannot exhaust normally.
+        for attempt in range(1, self.max_attempts + 1):  # pragma: no branch
             logger.info(
                 "Bridge client exchange: command=%s request_id=%r attempt=%d endpoint=%s",
                 command_name,

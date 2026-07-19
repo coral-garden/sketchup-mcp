@@ -144,6 +144,10 @@ class ExtensionPackageTest(unittest.TestCase):
                     archive.read("su_mcp/command_catalog.json"),
                 )
 
+    @unittest.skipIf(
+        os.environ.get("SKETCHUP_MCP_DETERMINISTIC_TESTS") == "1",
+        "real Ruby package-loader integration is outside the coverage target",
+    )
     def test_packaged_loader_registers_the_extension_with_project_version(self):
         with tempfile.TemporaryDirectory() as temporary:
             temporary_path = Path(temporary)
