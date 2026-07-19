@@ -1,16 +1,19 @@
 require 'sketchup'
 require 'json'
-require 'socket'
 require 'fileutils'
+require_relative 'bridge_listener'
 
 puts "MCP Extension loading..."
 SKETCHUP_CONSOLE.show rescue nil
 
 module SU_MCP
   class Server
-    def initialize
-      @port = 9876
-      @server = nil
+    def initialize(port: BridgeListener.port_from_environment)
+      @listener = BridgeListener.new(
+        port: port,
+        handler: method(:handle_jsonrpc_request),
+        logger: method(:log)
+      )
       @running = false
       @timer_id = nil
       
@@ -37,96 +40,27 @@ module SU_MCP
 
     def start
       return if @running
-      
+
       begin
-        log "Starting server on localhost:#{@port}..."
-        
-        @server = TCPServer.new('127.0.0.1', @port)
-        log "Server created on port #{@port}"
-        
+        log "Starting bridge on #{BridgeListener::HOST}:#{@listener.port}..."
+        @listener.start
         @running = true
-        
+
         @timer_id = UI.start_timer(0.1, true) {
           begin
-            if @running
-              # Check for connection
-              ready = IO.select([@server], nil, nil, 0)
-              if ready
-                log "Connection waiting..."
-                client = @server.accept_nonblock
-                log "Client accepted"
-                
-                data = client.gets
-                log "Raw data: #{data.inspect}"
-                
-                if data
-                  begin
-                    # Parse the raw JSON first to check format
-                    raw_request = JSON.parse(data)
-                    log "Raw parsed request: #{raw_request.inspect}"
-                    
-                    # Extract the original request ID if it exists in the raw data
-                    original_id = nil
-                    if data =~ /"id":\s*(\d+)/
-                      original_id = $1.to_i
-                      log "Found original request ID: #{original_id}"
-                    end
-                    
-                    # Use the raw request directly without transforming it
-                    # Just ensure the ID is preserved if it exists
-                    request = raw_request
-                    if !request["id"] && original_id
-                      request["id"] = original_id
-                      log "Added missing ID: #{original_id}"
-                    end
-                    
-                    log "Processed request: #{request.inspect}"
-                    response = handle_jsonrpc_request(request)
-                    response_json = response.to_json + "\n"
-                    
-                    log "Sending response: #{response_json.strip}"
-                    client.write(response_json)
-                    client.flush
-                    log "Response sent"
-                  rescue JSON::ParserError => e
-                    log "JSON parse error: #{e.message}"
-                    error_response = {
-                      jsonrpc: "2.0",
-                      error: { code: -32700, message: "Parse error" },
-                      id: original_id
-                    }.to_json + "\n"
-                    client.write(error_response)
-                    client.flush
-                  rescue StandardError => e
-                    log "Request error: #{e.message}"
-                    error_response = {
-                      jsonrpc: "2.0",
-                      error: { code: -32603, message: e.message },
-                      id: request ? request["id"] : original_id
-                    }.to_json + "\n"
-                    client.write(error_response)
-                    client.flush
-                  end
-                end
-                
-                client.close
-                log "Client closed"
-              end
-            end
-          rescue IO::WaitReadable
-            # Normal for accept_nonblock
+            @listener.poll(timeout: 0) if @running
           rescue StandardError => e
             log "Timer error: #{e.message}"
             log e.backtrace.join("\n")
           end
         }
-        
-        log "Server started and listening"
-        
+
+        log "Bridge started and listening"
       rescue StandardError => e
-        log "Error: #{e.message}"
+        log "Bridge startup error: #{e.message}"
         log e.backtrace.join("\n")
         stop
+        raise
       end
     end
 
@@ -138,9 +72,8 @@ module SU_MCP
         UI.stop_timer(@timer_id)
         @timer_id = nil
       end
-      
-      @server.close if @server
-      @server = nil
+
+      @listener.stop
       log "Server stopped"
     end
 
@@ -1857,4 +1790,4 @@ module SU_MCP
     
     file_loaded(__FILE__)
   end
-end 
+end
