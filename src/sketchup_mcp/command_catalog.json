@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "success_envelope": {
+    "transport": "JSON-RPC 2.0 result",
+    "description": "The result contains success=true, isError=false, and text content containing the command result as JSON. Commands that create or identify one primary SketchUp entity also expose that entity ID as resourceId."
+  },
+  "failure_semantics": {
+    "invalid_arguments": {
+      "jsonrpc_code": -32602,
+      "description": "A required argument is missing or an argument has an unsupported type or value. No command work is performed."
+    },
+    "execution_error": {
+      "jsonrpc_code": -32603,
+      "description": "SketchUp could not complete the command. The error message explains the failure and data.success is false."
+    }
+  },
+  "renamed_commands": {
+    "export": "export_scene",
+    "get_selected_components": "get_selection"
+  },
+  "commands": [
+    {
+      "name": "create_component",
+      "description": "Create a grouped primitive in the active SketchUp model.",
+      "arguments": {
+        "required": {},
+        "optional": {
+          "type": {"type": "string", "description": "Primitive type: cube, cylinder, sphere, or cone.", "default": "cube"},
+          "position": {"type": "number[3]", "description": "Origin as [x, y, z] in model units.", "default": [0, 0, 0]},
+          "dimensions": {"type": "number[3]", "description": "Width, depth, and height in model units.", "default": [1, 1, 1]}
+        }
+      },
+      "success": {"description": "Returns the created group entity ID.", "fields": {"id": "integer"}, "resource_id": "id"},
+      "failures": ["invalid_arguments", "execution_error"]
+    },
+    {
+      "name": "delete_component",
+      "description": "Delete one entity from the active SketchUp model.",
+      "arguments": {
+        "required": {
+          "id": {"type": "entity_id", "description": "SketchUp entity ID to delete."}
+        },
+        "optional": {}
+      },
+      "success": {"description": "Confirms that the entity was deleted.", "fields": {}},
+      "failures": ["invalid_arguments", "execution_error"]
+    },
+    {
+      "name": "transform_component",
+      "description": "Move, rotate, or scale an entity in the active SketchUp model.",
+      "arguments": {
+        "required": {
+          "id": {"type": "entity_id", "description": "SketchUp entity ID to transform."}
+        },
+        "optional": {
+          "position": {"type": "number[3]", "description": "Translation as [x, y, z] in model units.", "default": null},
+          "rotation": {"type": "number[3]", "description": "Rotation about x, y, and z in degrees.", "default": null},
+          "scale": {"type": "number[3]", "description": "Scale factors along x, y, and z.", "default": null}
+        }
+      },
+      "success": {"description": "Returns the transformed entity ID.", "fields": {"id": "integer"}, "resource_id": "id"},
+      "failures": ["invalid_arguments", "execution_error"]
+    },
+    {
+      "name": "get_selection",
+      "description": "List the entities currently selected in SketchUp.",
+      "arguments": {"required": {}, "optional": {}},
+      "success": {"description": "Returns each selected entity's ID and SketchUp type.", "fields": {"entities": "array<{id: integer, type: string}>"}},
+      "failures": ["execution_error"]
+    },
+    {
+      "name": "set_material",
+      "description": "Apply a named material or hexadecimal color to an entity.",
+      "arguments": {
+        "required": {
+          "id": {"type": "entity_id", "description": "SketchUp entity ID to receive the material."},
+          "material": {"type": "string", "description": "Existing material name, common color name, or #RRGGBB color."}
+        },
+        "optional": {}
+      },
+      "success": {"description": "Returns the entity ID that received the material.", "fields": {"id": "integer"}, "resource_id": "id"},
+      "failures": ["invalid_arguments", "execution_error"]
+    },
+    {
+      "name": "export_scene",
+      "description": "Export the active model to a temporary file.",
+      "arguments": {
+        "required": {},
+        "optional": {
+          "format": {"type": "string", "description": "Export format: skp, obj, dae, stl, png, jpg, or jpeg.", "default": "skp"}
+        }
+      },
+      "success": {"description": "Returns the absolute exported file path and selected format.", "fields": {"path": "string", "format": "string"}},
+      "failures": ["invalid_arguments", "execution_error"]
+    },
+    {
+      "name": "boolean_operation",
+      "description": "Create the union, difference, or intersection of two grouped entities.",
+      "arguments": {
+        "required": {
+          "operation": {"type": "string", "description": "Operation: union, difference, or intersection."},
+          "target_id": {"type": "entity_id", "description": "SketchUp entity ID of the target solid."},
+          "tool_id": {"type": "entity_id", "description": "SketchUp entity ID of the tool solid."}
+        },
+        "optional": {
+          "delete_originals": {"type": "boolean", "description": "Delete both source entities after a successful operation.", "default": false}
+        }
+      },
+      "success": {"description": "Returns the new result group entity ID.", "fields": {"id": "integer"}, "resource_id": "id"},
+      "failures": ["invalid_arguments", "execution_error"]
+    },
+    {
+      "name": "chamfer_edges",
+      "description": "Create a chamfered copy of a grouped entity's edges.",
+      "arguments": {
+        "required": {
+          "entity_id": {"type": "entity_id", "description": "SketchUp entity ID of the group or component instance."}
+        },
+        "optional": {
+          "distance": {"type": "number", "description": "Chamfer distance in model units.", "default": 0.5},
+          "edge_indices": {"type": "integer[]", "description": "Zero-based edge indexes to chamfer; all edges when omitted.", "default": null},
+          "delete_original": {"type": "boolean", "description": "Delete the source entity after a successful operation.", "default": false}
+        }
+      },
+      "success": {"description": "Returns the new chamfered group entity ID.", "fields": {"id": "integer"}, "resource_id": "id"},
+      "failures": ["invalid_arguments", "execution_error"]
+    },
+    {
+      "name": "fillet_edges",
+      "description": "Create a rounded copy of a grouped entity's edges.",
+      "arguments": {
+        "required": {
+          "entity_id": {"type": "entity_id", "description": "SketchUp entity ID of the group or component instance."}
+        },
+        "optional": {
+          "radius": {"type": "number", "description": "Fillet radius in model units.", "default": 0.5},
+          "segments": {"type": "integer", "description": "Number of segments used for each fillet arc.", "default": 8},
+          "edge_indices": {"type": "integer[]", "description": "Zero-based edge indexes to fillet; all edges when omitted.", "default": null},
+          "delete_original": {"type": "boolean", "description": "Delete the source entity after a successful operation.", "default": false}
+        }
+      },
+      "success": {"description": "Returns the new filleted group entity ID.", "fields": {"id": "integer"}, "resource_id": "id"},
+      "failures": ["invalid_arguments", "execution_error"]
+    },
+    {
+      "name": "create_mortise_tenon",
+      "description": "Create a mortise and matching tenon between two boards.",
+      "arguments": {
+        "required": {
+          "mortise_id": {"type": "entity_id", "description": "SketchUp entity ID of the board receiving the mortise."},
+          "tenon_id": {"type": "entity_id", "description": "SketchUp entity ID of the board receiving the tenon."}
+        },
+        "optional": {
+          "width": {"type": "number", "description": "Joint width in model units.", "default": 1.0},
+          "height": {"type": "number", "description": "Joint height in model units.", "default": 1.0},
+          "depth": {"type": "number", "description": "Joint depth in model units.", "default": 1.0},
+          "offset_x": {"type": "number", "description": "Joint offset along x.", "default": 0.0},
+          "offset_y": {"type": "number", "description": "Joint offset along y.", "default": 0.0},
+          "offset_z": {"type": "number", "description": "Joint offset along z.", "default": 0.0}
+        }
+      },
+      "success": {"description": "Returns the modified mortise and tenon board entity IDs.", "fields": {"mortise_id": "integer", "tenon_id": "integer"}},
+      "failures": ["invalid_arguments", "execution_error"]
+    },
+    {
+      "name": "create_dovetail",
+      "description": "Create matching dovetail tails and pins between two boards.",
+      "arguments": {
+        "required": {
+          "tail_id": {"type": "entity_id", "description": "SketchUp entity ID of the tail board."},
+          "pin_id": {"type": "entity_id", "description": "SketchUp entity ID of the pin board."}
+        },
+        "optional": {
+          "width": {"type": "number", "description": "Tail width in model units.", "default": 1.0},
+          "height": {"type": "number", "description": "Tail height in model units.", "default": 1.0},
+          "depth": {"type": "number", "description": "Joint depth in model units.", "default": 1.0},
+          "angle": {"type": "number", "description": "Dovetail angle in degrees.", "default": 15.0},
+          "num_tails": {"type": "integer", "description": "Number of tails and matching pins.", "default": 3},
+          "offset_x": {"type": "number", "description": "Joint offset along x.", "default": 0.0},
+          "offset_y": {"type": "number", "description": "Joint offset along y.", "default": 0.0},
+          "offset_z": {"type": "number", "description": "Joint offset along z.", "default": 0.0}
+        }
+      },
+      "success": {"description": "Returns the modified tail and pin board entity IDs.", "fields": {"tail_id": "integer", "pin_id": "integer"}},
+      "failures": ["invalid_arguments", "execution_error"]
+    },
+    {
+      "name": "create_finger_joint",
+      "description": "Create matching fingers and slots between two boards.",
+      "arguments": {
+        "required": {
+          "board1_id": {"type": "entity_id", "description": "SketchUp entity ID of the board receiving fingers."},
+          "board2_id": {"type": "entity_id", "description": "SketchUp entity ID of the board receiving slots."}
+        },
+        "optional": {
+          "width": {"type": "number", "description": "Finger width in model units.", "default": 1.0},
+          "height": {"type": "number", "description": "Finger height in model units.", "default": 1.0},
+          "depth": {"type": "number", "description": "Joint depth in model units.", "default": 1.0},
+          "num_fingers": {"type": "integer", "description": "Number of fingers and matching slots.", "default": 5},
+          "offset_x": {"type": "number", "description": "Joint offset along x.", "default": 0.0},
+          "offset_y": {"type": "number", "description": "Joint offset along y.", "default": 0.0},
+          "offset_z": {"type": "number", "description": "Joint offset along z.", "default": 0.0}
+        }
+      },
+      "success": {"description": "Returns the modified board entity IDs.", "fields": {"board1_id": "integer", "board2_id": "integer"}},
+      "failures": ["invalid_arguments", "execution_error"]
+    },
+    {
+      "name": "eval_ruby",
+      "description": "Evaluate Ruby source in SketchUp's top-level binding.",
+      "arguments": {
+        "required": {
+          "code": {"type": "string", "description": "Ruby source code to evaluate."}
+        },
+        "optional": {}
+      },
+      "success": {"description": "Returns the evaluated value converted to a string.", "fields": {"result": "string"}},
+      "failures": ["invalid_arguments", "execution_error"]
+    }
+  ]
+}
