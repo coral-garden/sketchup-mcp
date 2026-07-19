@@ -6,7 +6,7 @@ import side-effect free lets tooling consume static contracts without starting
 FastMCP or attempting a SketchUp connection.
 """
 
-__version__ = "0.1.17"
+from ._version import __version__
 
 __all__ = ["__version__", "mcp"]
 

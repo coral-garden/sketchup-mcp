@@ -1,9 +1,9 @@
 require 'json'
 
-require_relative '../../su_mcp/su_mcp/bridge_listener'
-require_relative '../../su_mcp/su_mcp/command_catalog'
-require_relative '../../su_mcp/su_mcp/command_dispatcher'
-require_relative '../../su_mcp/su_mcp/command_executor'
+require_relative '../../su_mcp/bridge_listener'
+require_relative '../../su_mcp/command_catalog'
+require_relative '../../su_mcp/command_dispatcher'
+require_relative '../../su_mcp/command_executor'
 
 
 class ContractAdapter

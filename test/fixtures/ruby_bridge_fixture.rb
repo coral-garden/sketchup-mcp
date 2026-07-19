@@ -1,5 +1,5 @@
 require 'json'
-require_relative '../../su_mcp/su_mcp/bridge_listener'
+require_relative '../../su_mcp/bridge_listener'
 
 
 request_count = 0

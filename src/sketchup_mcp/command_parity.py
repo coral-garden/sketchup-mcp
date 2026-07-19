@@ -9,7 +9,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 from typing import Iterable, Mapping
+import zipfile
 
 from .command_catalog import CommandCatalog, load_command_catalog
 from .command_docs import stale_documents
@@ -92,8 +94,8 @@ print(json.dumps([tool.name for tool in asyncio.run(mcp.list_tools())]))
 def _ruby_execution_commands(root: Path) -> set[str]:
     script = """
 require 'json'
-require './su_mcp/su_mcp/command_catalog'
-require './su_mcp/su_mcp/sketchup_adapter'
+require './su_mcp/command_catalog'
+require './su_mcp/sketchup_adapter'
 catalog = SU_MCP::CommandCatalog.new
 adapter = SU_MCP::SketchupAdapter.new(commands: Object.new, model: Object.new)
 puts JSON.generate(catalog.names.select { |name| adapter.respond_to?(name) })
@@ -109,26 +111,27 @@ puts JSON.generate(catalog.names.select { |name| adapter.respond_to?(name) })
 
 
 def _package_catalog_is_exact(root: Path) -> bool:
-    script = """
-require 'tmpdir'
-require './su_mcp/package_contract'
-Dir.mktmpdir do |staging_root|
-  packaged = SU_MCP::PackageContract.stage_catalog(
-    repo_root: Dir.pwd,
-    staging_root: staging_root
-  )
-  source = File.join(Dir.pwd, 'src', 'sketchup_mcp', 'command_catalog.json')
-  puts(File.binread(source) == File.binread(packaged) ? 'true' : 'false')
-end
-"""
-    completed = subprocess.run(
-        ["ruby", "-e", script],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return completed.stdout.strip() == "true"
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory)
+        subprocess.run(
+            [
+                sys.executable,
+                str(root / "scripts" / "build.py"),
+                "--output-dir",
+                directory,
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        artifacts = tuple(output.glob("*.rbz"))
+        if len(artifacts) != 1:
+            return False
+        with zipfile.ZipFile(artifacts[0]) as archive:
+            packaged = archive.read("su_mcp/command_catalog.json")
+    source = (root / "src" / "sketchup_mcp" / "command_catalog.json").read_bytes()
+    return packaged == source
 
 
 def repository_command_names(

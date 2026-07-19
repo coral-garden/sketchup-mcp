@@ -1,7 +1,7 @@
 require 'json'
 require 'socket'
 
-require_relative '../su_mcp/su_mcp/bridge_listener'
+require_relative '../su_mcp/bridge_listener'
 require_relative 'headless'
 
 

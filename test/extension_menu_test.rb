@@ -1,5 +1,5 @@
-require_relative '../su_mcp/su_mcp/extension_menu'
-require_relative '../su_mcp/su_mcp/extension_runtime'
+require_relative '../su_mcp/extension_menu'
+require_relative '../su_mcp/extension_runtime'
 require_relative 'headless'
 
 

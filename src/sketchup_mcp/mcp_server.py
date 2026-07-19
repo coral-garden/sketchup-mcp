@@ -10,15 +10,13 @@ from typing import Any, AsyncIterator, Iterator
 
 from mcp.server.fastmcp import Context, FastMCP
 
+from ._version import __version__
 from .bridge import BridgeClient
 from .catalog_fastmcp import CatalogFastMCP
 from .command_catalog import CommandCatalog, load_command_catalog
 
 
 logger = logging.getLogger("SketchUpMCP.MCPServer")
-
-__version__ = "0.1.17"
-
 
 @dataclass(frozen=True)
 class CommandForwarder:

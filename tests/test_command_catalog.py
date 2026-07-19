@@ -297,8 +297,11 @@ print(json.dumps({
             fixture = Path(directory)
             shutil.copytree(REPO_ROOT / "src", fixture / "src")
             shutil.copytree(REPO_ROOT / "su_mcp", fixture / "su_mcp")
+            shutil.copytree(REPO_ROOT / "scripts", fixture / "scripts")
             shutil.copytree(REPO_ROOT / "docs", fixture / "docs")
             shutil.copy(REPO_ROOT / "README.md", fixture / "README.md")
+            shutil.copy(REPO_ROOT / "VERSION", fixture / "VERSION")
+            shutil.copy(REPO_ROOT / "su_mcp.rb", fixture / "su_mcp.rb")
 
             mcp_server = fixture / "src/sketchup_mcp/mcp_server.py"
             mcp_server.write_text(
@@ -307,7 +310,7 @@ print(json.dumps({
                 ),
                 encoding="utf-8",
             )
-            adapter = fixture / "su_mcp/su_mcp/sketchup_adapter.rb"
+            adapter = fixture / "su_mcp/sketchup_adapter.rb"
             adapter.write_text(
                 adapter.read_text(encoding="utf-8").replace(
                     "def eval_ruby(code:)", "def unavailable_eval_ruby(code:)", 1

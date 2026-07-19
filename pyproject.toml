@@ -1,6 +1,6 @@
 [project]
 name = "sketchup-mcp"
-version = "0.1.17"
+dynamic = ["version"]
 description = "Sketchup integration through Model Context Protocol"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,11 +28,14 @@ sketchup-mcp = "sketchup_mcp.mcp_server:main"
 sketchup = "sketchup_mcp.mcp_server:mcp"
 
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=66.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = {file = ["VERSION"]}
 
 [tool.setuptools.package-data]
 sketchup_mcp = ["command_catalog.json"]

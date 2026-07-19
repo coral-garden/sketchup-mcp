@@ -1,5 +1,5 @@
-require_relative '../su_mcp/su_mcp/command_executor'
-require_relative '../su_mcp/su_mcp/sketchup_adapter'
+require_relative '../su_mcp/command_executor'
+require_relative '../su_mcp/sketchup_adapter'
 require_relative 'headless'
 
 

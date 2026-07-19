@@ -1,15 +1,16 @@
 require 'sketchup.rb'
 require 'extensions.rb'
-require 'json'
-require 'socket'
+
+require_relative 'su_mcp/version'
 
 module SU_MCP
   unless file_loaded?(__FILE__)
-    ex = SketchupExtension.new('SketchUp MCP', 'su_mcp/main')
-    ex.description = 'SketchUp extension that runs the local command bridge'
-    ex.version     = '0.1.0'
-    ex.copyright   = '2024'
-    Sketchup.register_extension(ex, true)
+    extension = SketchupExtension.new('SketchUp MCP', 'su_mcp/main')
+    extension.description = 'SketchUp extension that runs the local command bridge'
+    extension.version = SU_MCP::VERSION
+    extension.copyright = '2024'
+    extension.creator = 'MCP Team'
+    Sketchup.register_extension(extension, true)
     file_loaded(__FILE__)
   end
 end

@@ -35,8 +35,7 @@ supported launch paths. The historical `python -m sketchup_mcp.server` launch
 also remains available for compatibility; new integrations should use the
 `sketchup-mcp` command or `python -m sketchup_mcp`. The installed SketchUp
 extension runs an `ExtensionRuntime`; it is not an MCP server. The legacy
-`su_mcp` loader/package names and `SU_MCP_SERVER` product identifier remain
-compatibility identifiers; issue #17 owns any packaging migration.
+`su_mcp` loader and support-directory names remain compatibility identifiers.
 
 ## Installation
 
@@ -45,6 +44,21 @@ compatibility identifiers; issue #17 owns any packaging migration.
 We're using uv so you'll need to ```brew install uv```
 
 ### Sketchup Extension
+
+The RBZ builder requires Python 3.10 or newer and uses only the Python standard
+library. From the repository root, build and automatically validate the
+extension package with:
+
+```sh
+python scripts/build.py
+```
+
+The command writes the versioned RBZ to `dist/` and prints its SHA-256 digest.
+To validate an existing artifact without rebuilding it, run:
+
+```sh
+python scripts/build.py --check path/to/sketchup-mcp-X.Y.Z.rbz
+```
 
 1. Download or build the latest `.rbz` file
 2. In Sketchup, go to Window > Extension Manager

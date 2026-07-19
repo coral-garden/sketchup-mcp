@@ -21,6 +21,14 @@ _Avoid_: Python client, SketchUp server
 The installed SketchUp package that provides the bridge and modeling integration.
 _Avoid_: Ruby server, plugin server
 
+**Extension package**:
+The installable release unit for the SketchUp extension.
+_Avoid_: Ruby package, plugin bundle
+
+**Project version**:
+The shared release identity of the MCP server and SketchUp extension.
+_Avoid_: Python version, extension version
+
 **Extension runtime**:
 The active role inside the SketchUp extension that owns bridge availability and coordinates command handling with SketchUp.
 _Avoid_: MCP server, Ruby server, command executor

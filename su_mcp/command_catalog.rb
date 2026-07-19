@@ -37,7 +37,7 @@ module SU_MCP
   end
 
   class CommandCatalog
-    SOURCE_PATH = File.expand_path('../../src/sketchup_mcp/command_catalog.json', __dir__)
+    SOURCE_PATH = File.expand_path('../src/sketchup_mcp/command_catalog.json', __dir__)
     PACKAGED_PATH = File.join(__dir__, 'command_catalog.json')
 
     def self.default_path
