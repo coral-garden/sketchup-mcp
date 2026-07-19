@@ -1,6 +1,6 @@
-require 'json'
-require 'socket'
 require 'thread'
+require_relative 'bridge_protocol'
+require_relative 'socket_transport'
 
 
 module SU_MCP
@@ -18,22 +18,6 @@ module SU_MCP
     class IncompleteFrameError < StandardError; end
     class IOTimeoutError < StandardError; end
 
-    class SocketTransport
-      def listen(host, port)
-        TCPServer.new(host, port)
-      end
-
-      def now
-        Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      end
-
-      def wait(socket, direction, timeout)
-        readers = direction == :read ? [socket] : nil
-        writers = direction == :write ? [socket] : nil
-        !IO.select(readers, writers, nil, timeout).nil?
-      end
-    end
-
     attr_reader :port
 
     def self.port_from_environment
@@ -48,8 +32,8 @@ module SU_MCP
       transport: SocketTransport.new
     )
       @port = port
-      @handler = handler
       @logger = logger || ->(_message) {}
+      @protocol = BridgeProtocol.new(handler: handler, logger: @logger)
       @io_timeout = io_timeout
       @transport = transport
       @listening_socket = nil
@@ -80,8 +64,8 @@ module SU_MCP
         [@clients.dup, @workers.dup]
       end
       clients.each { |client| close(client) }
-      workers.each { |worker| worker.kill if worker.alive? }
-      workers.each { |worker| worker.join unless worker == Thread.current }
+      workers.each(&:kill)
+      workers.each(&:join)
       @connections_lock.synchronize do
         @clients.clear
         @workers.clear
@@ -119,7 +103,7 @@ module SU_MCP
       while count < limit
         item = @ready.pop(true)
         if item.is_a?(WorkItem)
-          item.response_queue << handle(item.request)
+          item.response_queue << @protocol.response_frame(item.request)
         else
           @logger.call(item.message)
         end
@@ -133,7 +117,7 @@ module SU_MCP
     private
 
     def serve(client)
-      request = JSON.parse(read_frame(client))
+      request = @protocol.decode(read_frame(client))
       response_queue = Queue.new
       @ready << WorkItem.new(request: request, response_queue: response_queue)
       write_frame(client, response_queue.pop)
@@ -150,17 +134,6 @@ module SU_MCP
         @clients.delete(client)
         @workers.delete(Thread.current)
       end
-    end
-
-    def handle(request)
-      @handler.call(request)
-    rescue StandardError => error
-      @logger.call('Bridge listener: command dispatch failed')
-      {
-        jsonrpc: '2.0',
-        error: { code: -32_603, message: error.message },
-        id: request.is_a?(Hash) ? request['id'] : nil
-      }
     end
 
     def read_frame(client)
@@ -182,8 +155,7 @@ module SU_MCP
       end
     end
 
-    def write_frame(client, response)
-      bytes = JSON.generate(response) + "\n"
+    def write_frame(client, bytes)
       offset = 0
       deadline = @transport.now + @io_timeout
 
@@ -198,10 +170,7 @@ module SU_MCP
     end
 
     def write_parse_error(client)
-      write_frame(
-        client,
-        jsonrpc: '2.0', error: { code: -32_700, message: 'Parse error' }, id: nil
-      )
+      write_frame(client, @protocol.parse_error_frame)
     rescue StandardError => error
       enqueue_log("Bridge listener: I/O error: #{error.message}")
     end

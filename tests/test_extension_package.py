@@ -24,6 +24,7 @@ EXPECTED_FILES = (
     "su_mcp.rb",
     "su_mcp/VERSION",
     "su_mcp/bridge_listener.rb",
+    "su_mcp/bridge_protocol.rb",
     "su_mcp/bridge_runtime.rb",
     "su_mcp/command_catalog.json",
     "su_mcp/command_catalog.rb",
@@ -37,6 +38,7 @@ EXPECTED_FILES = (
     "su_mcp/main.rb",
     "su_mcp/sketchup_adapter.rb",
     "su_mcp/sketchup_commands.rb",
+    "su_mcp/socket_transport.rb",
     "su_mcp/version.rb",
 )
 
@@ -270,14 +272,22 @@ class ExtensionPackageTest(unittest.TestCase):
             self.assertIn("symbolic link", completed.stderr.lower())
 
     def test_build_rejects_missing_literal_require_relative_target(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            fixture = self.copy_package_fixture(Path(temporary))
-            (fixture / "su_mcp" / "extension_menu.rb").unlink()
+        for filename in (
+            "extension_menu.rb",
+            "bridge_protocol.rb",
+            "socket_transport.rb",
+        ):
+            with self.subTest(filename=filename):
+                with tempfile.TemporaryDirectory() as temporary:
+                    fixture = self.copy_package_fixture(Path(temporary))
+                    (fixture / "su_mcp" / filename).unlink()
 
-            completed = self.run_fixture_build(fixture)
+                    completed = self.run_fixture_build(fixture)
 
-            self.assertNotEqual(0, completed.returncode)
-            self.assertIn("missing require_relative target", completed.stderr.lower())
+                    self.assertNotEqual(0, completed.returncode)
+                    self.assertIn(
+                        "missing require_relative target", completed.stderr.lower()
+                    )
 
     def test_build_rejects_missing_sketchup_extension_load_target(self):
         with tempfile.TemporaryDirectory() as temporary:

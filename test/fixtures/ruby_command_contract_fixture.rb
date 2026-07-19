@@ -44,7 +44,12 @@ begin
   listener.start
   STDOUT.write(JSON.generate(port: listener.port) + "\n")
   STDOUT.flush
+  deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
   until request_count == commands.length
+    if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+      raise 'Command contract fixture did not receive every request before the deadline'
+    end
+
     listener.poll(timeout: 0.01)
     listener.drain
   end

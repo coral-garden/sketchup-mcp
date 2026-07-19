@@ -1,12 +1,22 @@
 module SU_MCP
+  class VersionSource
+    def initialize(filesystem: File)
+      @filesystem = filesystem
+    end
+
+    def read(candidates)
+      path = candidates.find { |candidate| @filesystem.file?(candidate) }
+      raise 'SketchUp MCP project version is unavailable' unless path
+
+      @filesystem.read(path, encoding: 'UTF-8').strip
+    end
+  end
+
   VERSION_FILES = [
     File.join(__dir__, 'VERSION'),
     File.expand_path('../VERSION', __dir__)
   ].freeze
-  VERSION_FILE = VERSION_FILES.find { |path| File.file?(path) }
-  raise 'SketchUp MCP project version is unavailable' unless VERSION_FILE
+  VERSION = VersionSource.new.read(VERSION_FILES).freeze
 
-  VERSION = File.read(VERSION_FILE, encoding: 'UTF-8').strip.freeze
-
-  private_constant :VERSION_FILES, :VERSION_FILE
+  private_constant :VERSION_FILES
 end

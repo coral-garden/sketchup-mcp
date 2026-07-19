@@ -2,6 +2,17 @@ require_relative '../su_mcp/version'
 require_relative 'headless'
 
 
+class UnavailableVersionFilesystem
+  def file?(_path)
+    false
+  end
+
+  def read(_path, encoding:)
+    raise "unexpected Project version read with #{encoding}"
+  end
+end
+
+
 class PackageContractTest
   include HeadlessTest::Assertions
 
@@ -22,6 +33,16 @@ class PackageContractTest
     assert_includes loader, 'SketchUp extension'
     assert_equal false, loader.include?('MCP Server')
     assert_equal false, loader.include?('MCP server')
+  end
+
+  def test_project_version_source_rejects_missing_project_and_package_files
+    source = SU_MCP::VersionSource.new(filesystem: UnavailableVersionFilesystem.new)
+
+    error = assert_raises(RuntimeError) do
+      source.read(%w[packaged/VERSION project/VERSION])
+    end
+
+    assert_equal 'SketchUp MCP project version is unavailable', error.message
   end
 end
 

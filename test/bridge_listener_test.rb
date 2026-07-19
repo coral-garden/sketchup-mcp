@@ -3,135 +3,7 @@ require 'socket'
 
 require_relative '../su_mcp/bridge_listener'
 require_relative 'headless'
-
-
-class ControlledClock
-  def initialize
-    @now = 0.0
-  end
-
-  def call
-    @now
-  end
-
-  def advance(seconds)
-    @now += seconds
-  end
-end
-
-
-class StalledWriteClient
-  attr_reader :write_attempts
-
-  def initialize(request_frame)
-    @request_frame = request_frame
-    @write_attempts = 0
-    @closed = false
-  end
-
-  def read_nonblock(_length, exception:)
-    frame = @request_frame
-    @request_frame = nil
-    frame
-  end
-
-  def write_nonblock(_bytes, exception:)
-    @write_attempts += 1
-    :wait_writable
-  end
-
-  def close
-    @closed = true
-  end
-
-  def closed?
-    @closed
-  end
-end
-
-
-class IncompleteFrameClient
-  attr_reader :response
-
-  def initialize(request_fragment)
-    @request_fragment = request_fragment
-    @closed = false
-    @response = +''
-  end
-
-  def read_nonblock(_length, exception:)
-    fragment = @request_fragment
-    @request_fragment = nil
-    fragment
-  end
-
-  def write_nonblock(bytes, exception:)
-    @response << bytes
-    bytes.bytesize
-  end
-
-  def close
-    @closed = true
-  end
-
-  def closed?
-    @closed
-  end
-end
-
-
-class ControlledServerSocket
-  Address = Struct.new(:ip_port, :ip_address)
-
-  def initialize(client)
-    @client = client
-    @closed = false
-  end
-
-  def local_address
-    Address.new(12_345, '127.0.0.1')
-  end
-
-  def accept_nonblock
-    client = @client
-    @client = nil
-    client
-  end
-
-  def close
-    @closed = true
-  end
-
-  def closed?
-    @closed
-  end
-end
-
-
-class ControlledSocketTransport
-  def initialize(listening_socket:, clock: ControlledClock.new, stall_writes: false)
-    @listening_socket = listening_socket
-    @clock = clock
-    @stall_writes = stall_writes
-  end
-
-  def listen(host, port)
-    @listened_on = [host, port]
-    @listening_socket
-  end
-
-  def now
-    @clock.call
-  end
-
-  def wait(socket, direction, timeout)
-    return true if socket.equal?(@listening_socket)
-    return true unless @stall_writes && direction == :write
-
-    @clock.advance(timeout)
-    false
-  end
-end
+require_relative 'support/controlled_bridge'
 
 
 class BridgeListenerTest
@@ -251,21 +123,22 @@ class BridgeListenerTest
   end
 
   def test_stalled_response_write_times_out_off_the_polling_thread
-    clock = ControlledClock.new
-    client = StalledWriteClient.new(
-      JSON.generate(jsonrpc: '2.0', method: 'tools/call', id: 54) + "\n"
+    clock = ControlledBridgeClock.new
+    client = ScriptedBridgeClient.new(
+      reads: [JSON.generate(jsonrpc: '2.0', method: 'tools/call', id: 54) + "\n"],
+      writes: [:wait_writable]
     )
-    listening_socket = ControlledServerSocket.new(client)
+    listening_socket = ControlledBridgeListeningSocket.new(clients: [client])
     messages = []
     logging_threads = []
     listener = SU_MCP::BridgeListener.new(
       port: 0,
       handler: ->(request) { { jsonrpc: '2.0', result: {}, id: request['id'] } },
       io_timeout: 0.25,
-      transport: ControlledSocketTransport.new(
+      transport: ControlledBridgeTransport.new(
         listening_socket: listening_socket,
         clock: clock,
-        stall_writes: true
+        client_waits: { write: [false] }
       ),
       logger: ->(message) {
         messages << message
@@ -287,13 +160,13 @@ class BridgeListenerTest
   end
 
   def test_half_closed_request_without_newline_is_rejected_by_the_io_worker
-    client = IncompleteFrameClient.new('{"jsonrpc":"2.0","id":56}')
-    listening_socket = ControlledServerSocket.new(client)
+    client = ScriptedBridgeClient.new(reads: ['{"jsonrpc":"2.0","id":56}'])
+    listening_socket = ControlledBridgeListeningSocket.new(clients: [client])
     handler_calls = 0
     listener = SU_MCP::BridgeListener.new(
       port: 0,
       handler: ->(_request) { handler_calls += 1 },
-      transport: ControlledSocketTransport.new(listening_socket: listening_socket)
+      transport: ControlledBridgeTransport.new(listening_socket: listening_socket)
     )
     @listeners ||= []
     @listeners << listener
@@ -320,12 +193,9 @@ class BridgeListenerTest
     client.flush
     client.close_write if close_write
     listener.poll(timeout: 1)
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 1
-    until IO.select([client], nil, nil, 0.001)
+    wait_until do
       listener.drain
-      if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
-        raise 'listener did not produce a response'
-      end
+      !IO.select([client], nil, nil, 0.001).nil?
     end
     response_frame = client.gets
     eof = client.read
