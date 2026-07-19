@@ -29,11 +29,13 @@ class CommandContract:
 
     name: str
     description: str
+    failure_action: str
     required_arguments: tuple[ArgumentContract, ...]
     optional_arguments: tuple[ArgumentContract, ...]
     success: Mapping[str, Any]
     failures: tuple[str, ...]
     constraints: Mapping[str, Any] | None = None
+    execution_error: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +137,7 @@ def load_command_catalog() -> CommandCatalog:
         CommandContract(
             name=command["name"],
             description=command["description"],
+            failure_action=command["failure_action"],
             required_arguments=tuple(
                 _argument(name, value)
                 for name, value in command["arguments"]["required"].items()
@@ -146,6 +149,7 @@ def load_command_catalog() -> CommandCatalog:
             success=_freeze(command["success"]),
             failures=tuple(command["failures"]),
             constraints=_freeze(command.get("constraints", {})),
+            execution_error=_freeze(command.get("execution_error")),
         )
         for command in raw["commands"]
     )
@@ -296,6 +300,15 @@ def _validate_argument(name: str, value: Any, contract: ArgumentContract) -> Non
         raise InvalidCommandArguments(
             f"argument {name!r} must contain at least "
             f"{constraints['min_length']} character(s)"
+        )
+    conditional_pattern = constraints.get("pattern_if_prefixed")
+    if (
+        conditional_pattern
+        and value.startswith(conditional_pattern["prefix"])
+        and re.fullmatch(conditional_pattern["pattern"], value) is None
+    ):
+        raise InvalidCommandArguments(
+            f"argument {name!r} {conditional_pattern['message']}"
         )
     if any(
         forbidden in value

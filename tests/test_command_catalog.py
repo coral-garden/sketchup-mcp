@@ -1,6 +1,8 @@
+import asyncio
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,6 +14,13 @@ SRC_ROOT = REPO_ROOT / "src"
 
 
 class CommandCatalogTests(unittest.TestCase):
+    def test_catalog_fastmcp_needs_no_second_command_inventory(self):
+        from sketchup_mcp.catalog_fastmcp import CatalogFastMCP
+
+        server = CatalogFastMCP("Catalog contract")
+
+        self.assertEqual([], asyncio.run(server.list_tools()))
+
     def test_argument_validation_supports_scalar_positive_constraints(self):
         from sketchup_mcp.command_catalog import (
             ArgumentContract,
@@ -28,6 +37,7 @@ class CommandCatalogTests(unittest.TestCase):
                 CommandContract(
                     name="positive_number",
                     description="A future catalog constraint fixture.",
+                    failure_action="processing a positive number",
                     required_arguments=(
                         ArgumentContract(
                             name="amount",
@@ -73,10 +83,11 @@ catalog = load_command_catalog()
 print(json.dumps({
     "names": list(catalog.names),
     "complete": all(
-        command.required_arguments is not None
-        and command.optional_arguments is not None
-        and command.success
-        and command.failures
+                command.required_arguments is not None
+                and command.optional_arguments is not None
+                and command.success
+                and command.failures
+                and command.failure_action
         for command in catalog.commands
     ),
     "mcp_imported": any(name == "mcp" or name.startswith("mcp.") for name in sys.modules),
@@ -196,6 +207,9 @@ print(json.dumps({
             },
             {"invalid_arguments": -32602, "execution_error": -32603},
         )
+        eval_description = catalog.command("eval_ruby").description
+        self.assertIn("trusted local Ruby", eval_description)
+        self.assertIn("must not manage SketchUp operations", eval_description)
 
     def test_parity_comparison_reports_every_kind_of_name_disagreement(self):
         from sketchup_mcp.command_parity import compare_commands
@@ -231,7 +245,13 @@ print(json.dumps({
 
         self.assertEqual(
             [report.consumer for report in reports],
-            ["python_mcp_server", "ruby_extension", "manifest", "readme"],
+            [
+                "fastmcp_registration",
+                "ruby_execution",
+                "readme",
+                "command_docs",
+                "package_catalog",
+            ],
         )
         for report in reports:
             self.assertEqual(
@@ -243,12 +263,31 @@ print(json.dumps({
         for report in reports:
             self.assertTrue(report.in_sync, report.as_dict())
 
-    def test_manifest_contract_is_derived_from_the_authoritative_catalog(self):
-        from sketchup_mcp.command_catalog import manifest_tools
+    def test_command_documents_are_generated_and_the_obsolete_manifest_is_gone(self):
+        from sketchup_mcp.command_docs import check_documents, write_documents
 
-        manifest = json.loads((REPO_ROOT / "sketchup.json").read_text(encoding="utf-8"))
+        self.assertFalse((REPO_ROOT / "sketchup.json").exists())
+        self.assertTrue(check_documents(REPO_ROOT))
 
-        self.assertEqual(manifest_tools(), manifest["tools"])
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory)
+            (fixture / "docs").mkdir()
+            shutil.copy(REPO_ROOT / "README.md", fixture / "README.md")
+            shutil.copy(
+                REPO_ROOT / "docs/command-catalog.md",
+                fixture / "docs/command-catalog.md",
+            )
+            readme = fixture / "README.md"
+            readme.write_text(
+                readme.read_text(encoding="utf-8").replace(
+                    "`create_component`", "`stale_component`", 1
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertFalse(check_documents(fixture))
+            write_documents(fixture)
+            self.assertTrue(check_documents(fixture))
 
     def test_parity_verifier_cli_returns_machine_readable_failure(self):
         environment = os.environ.copy()
@@ -256,28 +295,30 @@ print(json.dumps({
 
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory)
-            (fixture / "src/sketchup_mcp").mkdir(parents=True)
-            (fixture / "su_mcp/su_mcp").mkdir(parents=True)
-            (fixture / "src/sketchup_mcp/server.py").write_text(
-                "@mcp.tool()\ndef create_component():\n    pass\n",
+            shutil.copytree(REPO_ROOT / "src", fixture / "src")
+            shutil.copytree(REPO_ROOT / "su_mcp", fixture / "su_mcp")
+            shutil.copytree(REPO_ROOT / "docs", fixture / "docs")
+            shutil.copy(REPO_ROOT / "README.md", fixture / "README.md")
+
+            server = fixture / "src/sketchup_mcp/server.py"
+            server.write_text(
+                server.read_text(encoding="utf-8").replace(
+                    "@mcp.tool()\ndef eval_ruby(", "def eval_ruby(", 1
+                ),
                 encoding="utf-8",
             )
-            (fixture / "su_mcp/su_mcp/sketchup_commands.rb").write_text(
-                "COMMAND_METHODS = {\n"
-                "  'create_component' => :create_component\n"
-                "}.freeze\n",
+            adapter = fixture / "su_mcp/su_mcp/sketchup_adapter.rb"
+            adapter.write_text(
+                adapter.read_text(encoding="utf-8").replace(
+                    "def eval_ruby(code:)", "def unavailable_eval_ruby(code:)", 1
+                ),
                 encoding="utf-8",
             )
-            (fixture / "su_mcp/su_mcp/command_executor.rb").write_text(
-                "RENAMED_COMMANDS = {}.freeze\n",
-                encoding="utf-8",
-            )
-            (fixture / "sketchup.json").write_text(
-                json.dumps({"tools": [{"name": "create_component"}]}),
-                encoding="utf-8",
-            )
-            (fixture / "README.md").write_text(
-                "#### Tools\n\n- `create_component`\n- `get_scene_info`\n",
+            readme = fixture / "README.md"
+            readme.write_text(
+                readme.read_text(encoding="utf-8").replace(
+                    "`eval_ruby`", "`stale_eval_ruby`", 1
+                ),
                 encoding="utf-8",
             )
 
@@ -301,9 +342,21 @@ print(json.dumps({
         self.assertFalse(report["in_sync"])
         self.assertEqual(
             [consumer["consumer"] for consumer in report["consumers"]],
-            ["python_mcp_server", "ruby_extension", "manifest", "readme"],
+            [
+                "fastmcp_registration",
+                "ruby_execution",
+                "readme",
+                "command_docs",
+                "package_catalog",
+            ],
         )
-        self.assertEqual(report["consumers"][3]["extra"], ["get_scene_info"])
+        self.assertEqual(
+            ["eval_ruby"], report["consumers"][0]["missing"]
+        )
+        self.assertEqual(
+            ["eval_ruby"], report["consumers"][1]["missing"]
+        )
+        self.assertIn("eval_ruby", report["consumers"][2]["missing"])
 
 
 if __name__ == "__main__":

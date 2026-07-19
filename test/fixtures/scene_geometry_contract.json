@@ -60,9 +60,11 @@
     {"name": "delete_component", "arguments": {"id": "7.31"}, "contains": "id"},
     {"name": "transform_component", "arguments": {"id": 731, "scale": [1, -1, 1]}, "contains": "scale"},
     {"name": "set_material", "arguments": {"id": 731, "material": ""}, "contains": "material"},
+    {"name": "set_material", "arguments": {"id": 731, "material": "#GG0000"}, "contains": "material"},
     {"name": "export_scene", "arguments": {"format": "SKP"}, "contains": "format"},
     {"name": "boolean_operation", "arguments": {"operation": "merge", "target_id": 731, "tool_id": 732}, "contains": "operation"},
     {"name": "boolean_operation", "arguments": {"operation": "union", "target_id": 731, "tool_id": 732, "delete_originals": 1}, "contains": "delete_originals"},
+    {"name": "boolean_operation", "arguments": {"operation": "union", "target_id": 731, "tool_id": 731}, "contains": "different entities"},
     {"name": "get_selection", "arguments": {"extra": true}, "contains": "unknown argument"}
   ]
 }

@@ -20,7 +20,7 @@ class InMemorySceneGeometryAdapter
   end
 
   def create_component(type:, position:, dimensions:)
-    record('create_component', type: type, position: position, dimensions: dimensions).fetch('id')
+    record('create_component', type: type, position: position, dimensions: dimensions)
   end
 
   def delete_component(id:)
@@ -172,20 +172,31 @@ class SceneGeometryContractTest
   end
 
 
-  def test_only_the_catalogued_executable_export_alias_is_accepted
+  def test_legacy_direct_requests_accept_only_the_executable_export_alias
     results = {
       'export_scene' => { 'path' => '/tmp/model.skp', 'format' => 'skp' }
     }
     sketchup = InMemorySceneGeometryAdapter.new(results: results)
     dispatcher = dispatcher_for(sketchup)
 
-    response = dispatcher.call(tool_request('export', {}, 'legacy-export'))
+    response = dispatcher.call(
+      'command' => 'export',
+      'parameters' => { 'format' => 'skp' },
+      'id' => 'legacy-export'
+    )
+    migration_only = dispatcher.call(
+      'command' => 'get_selected_components',
+      'parameters' => {},
+      'id' => 'legacy-selection'
+    )
 
     assert_equal(
       '{"path":"/tmp/model.skp","format":"skp"}',
       response.dig(:result, :content, 0, :text)
     )
     assert_equal 'export_scene', sketchup.calls.first.first
+    assert_equal(-32_601, migration_only.dig(:error, :code))
+    assert_equal 'legacy-selection', migration_only[:id]
   end
 
   def test_adapter_failures_return_internal_error_with_the_original_request_id

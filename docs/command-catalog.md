@@ -6,6 +6,7 @@ extension. It defines every command's required and optional arguments, result
 fields, and failure semantics. Runtime code and documentation should consume or
 be checked against this catalog instead of maintaining independent inventories.
 
+<!-- command-catalog:start -->
 The accepted public command names are:
 
 - `create_component`
@@ -20,10 +21,14 @@ The accepted public command names are:
 - `create_finger_joint`
 - `eval_ruby`
 
-Two names are recognized only when reporting migration work:
+Executable compatibility aliases:
 
-- `export` must become `export_scene`.
-- `get_selected_components` must become `get_selection`.
+- `export` executes `export_scene`.
+
+Migration-only rename guidance:
+
+- `get_selected_components` must become `get_selection` and is not executable.
+<!-- command-catalog:end -->
 
 `get_scene_info` is not an accepted command and has no canonical replacement.
 
@@ -44,9 +49,10 @@ From the repository root, run:
 PYTHONPATH=src python -m sketchup_mcp.command_parity .
 ```
 
-Add `--json` for machine-readable output. The command exits zero only when the
-Python MCP server, Ruby extension, `sketchup.json`, and README all use the
-canonical names. The Ruby runtime loads the catalog's explicit executable
+Add `--json` for machine-readable output. The command exits zero only when live
+FastMCP registration, Ruby command execution reachability, both generated
+documentation blocks, and the extension's staged catalog bytes match the
+authoritative catalog. The Ruby runtime loads the catalog's explicit executable
 `export` compatibility alias separately from the canonical public inventory, so
 compatibility does not appear as a second public command.
 

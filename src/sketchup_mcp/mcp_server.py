@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .bridge import BridgeClient
+from .command_catalog import CommandCatalog, load_command_catalog
 
 
 logger = logging.getLogger("SketchupMCPServer")
@@ -18,6 +19,7 @@ class CommandForwarder:
     """Carry one public command across the bridge seam."""
 
     bridge: BridgeClient
+    catalog: CommandCatalog = field(default_factory=load_command_catalog)
 
     def call(
         self,
@@ -27,51 +29,21 @@ class CommandForwarder:
     ) -> str:
         """Return the bridge success envelope serialized as JSON."""
 
-        result = self.bridge.send_command(
-            command,
-            arguments,
-            request_id=request_id,
-        )
-        return json.dumps(result)
-
-
-@dataclass(frozen=True)
-class CreateComponentTool:
-    """Map create-component inputs and outputs across the SketchUp bridge seam."""
-
-    bridge: BridgeClient
-
-    def create_component(
-        self,
-        request_id: Any,
-        component_type: str = "cube",
-        position: list[float] | None = None,
-        dimensions: list[float] | None = None,
-    ) -> str:
-        """Create a SketchUp primitive while preserving the MCP request ID."""
-
-        logger.info(
-            "create_component called: request_id=%r",
-            request_id,
-        )
+        contract = self.catalog.command(command)
+        logger.info("%s called: request_id=%r", command, request_id)
         try:
-            result = CommandForwarder(self.bridge).call(
-                command="create_component",
-                arguments={
-                    "type": component_type,
-                    "position": position if position is not None else [0, 0, 0],
-                    "dimensions": (
-                        dimensions if dimensions is not None else [1, 1, 1]
-                    ),
-                },
+            result = self.bridge.send_command(
+                command,
+                arguments,
                 request_id=request_id,
             )
-            logger.info("create_component completed: request_id=%r", request_id)
-            return result
         except Exception as error:
             logger.error(
-                "create_component failed: request_id=%r, error=%s",
+                "%s failed: request_id=%r, error=%s",
+                command,
                 request_id,
                 error,
             )
-            return f"Error creating component: {error}"
+            return f"Error {contract.failure_action}: {error}"
+        logger.info("%s completed: request_id=%r", command, request_id)
+        return json.dumps(result)

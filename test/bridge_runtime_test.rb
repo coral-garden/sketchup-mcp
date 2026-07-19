@@ -38,7 +38,7 @@ class ThreadRecordingSketchup
     @calling_threads << Thread.current
     raise @failure if @failure
 
-    321
+    { id: 321 }
   end
 end
 

@@ -1,12 +1,11 @@
 from mcp.server.fastmcp import FastMCP, Context
-import json
 import logging
 from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncIterator, Dict, Any, Iterator, List
 
 from .bridge import BridgeClient
 from .catalog_fastmcp import CatalogFastMCP
-from .mcp_server import CommandForwarder, CreateComponentTool
+from .mcp_server import CommandForwarder
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -42,22 +41,18 @@ def use_bridge_client(client: BridgeClient) -> Iterator[None]:
         _bridge_client = previous
 
 
-def call_catalog_tool(
+def forward_command(
     request_id: Any,
     command: str,
     arguments: dict[str, Any],
-    failure_action: str,
 ) -> str:
-    """Serialize a bridge result while retaining the public tool error wording."""
+    """Forward one statically registered public command through the catalog path."""
 
-    try:
-        return CommandForwarder(get_bridge_client()).call(
-            command,
-            arguments,
-            request_id=request_id,
-        )
-    except Exception as error:
-        return f"Error {failure_action}: {error}"
+    return CommandForwarder(get_bridge_client()).call(
+        command,
+        arguments,
+        request_id=request_id,
+    )
 
 
 @asynccontextmanager
@@ -72,28 +67,11 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
         _bridge_client = None
         logger.info("SketchupMCP server shut down")
 
-# The scene/geometry family is catalog-governed while the remaining handlers are
-# migrated independently by the next command-family issue.
-CATALOG_COMMANDS = (
-    "create_component",
-    "delete_component",
-    "transform_component",
-    "get_selection",
-    "set_material",
-    "export_scene",
-    "boolean_operation",
-    "create_mortise_tenon",
-    "create_dovetail",
-    "create_finger_joint",
-    "eval_ruby",
-)
-
 # Create MCP server with lifespan support
 mcp = CatalogFastMCP(
     "SketchupMCP",
     instructions="Sketchup integration through the Model Context Protocol",
     lifespan=server_lifespan,
-    catalog_commands=CATALOG_COMMANDS,
 )
 
 # Tool endpoints
@@ -104,12 +82,14 @@ def create_component(
     position: List[float] = None,
     dimensions: List[float] = None
 ) -> str:
-    """Create a new component in Sketchup"""
-    return CreateComponentTool(get_bridge_client()).create_component(
-        request_id=ctx.request_id,
-        component_type=type,
-        position=position,
-        dimensions=dimensions,
+    return forward_command(
+        ctx.request_id,
+        "create_component",
+        {
+            "type": type,
+            "position": position if position is not None else [0, 0, 0],
+            "dimensions": dimensions if dimensions is not None else [1, 1, 1],
+        },
     )
 
 @mcp.tool()
@@ -117,10 +97,7 @@ def delete_component(
     ctx: Context,
     id: int | str
 ) -> str:
-    """Delete a component by ID"""
-    return call_catalog_tool(
-        ctx.request_id, "delete_component", {"id": id}, "deleting component"
-    )
+    return forward_command(ctx.request_id, "delete_component", {"id": id})
 
 @mcp.tool()
 def transform_component(
@@ -130,7 +107,6 @@ def transform_component(
     rotation: List[float] = None,
     scale: List[float] = None
 ) -> str:
-    """Transform a component's position, rotation, or scale"""
     arguments = {"id": id}
     if position is not None:
         arguments["position"] = position
@@ -138,19 +114,15 @@ def transform_component(
         arguments["rotation"] = rotation
     if scale is not None:
         arguments["scale"] = scale
-    return call_catalog_tool(
+    return forward_command(
         ctx.request_id,
         "transform_component",
         arguments,
-        "transforming component",
     )
 
 @mcp.tool()
 def get_selection(ctx: Context) -> str:
-    """Get currently selected components"""
-    return call_catalog_tool(
-        ctx.request_id, "get_selection", {}, "getting selection"
-    )
+    return forward_command(ctx.request_id, "get_selection", {})
 
 @mcp.tool()
 def set_material(
@@ -158,12 +130,10 @@ def set_material(
     id: int | str,
     material: str
 ) -> str:
-    """Set material for a component"""
-    return call_catalog_tool(
+    return forward_command(
         ctx.request_id,
         "set_material",
         {"id": id, "material": material},
-        "setting material",
     )
 
 @mcp.tool()
@@ -171,12 +141,10 @@ def export_scene(
     ctx: Context,
     format: str = "skp"
 ) -> str:
-    """Export the current scene"""
-    return call_catalog_tool(
+    return forward_command(
         ctx.request_id,
         "export_scene",
         {"format": format},
-        "exporting scene",
     )
 
 
@@ -188,8 +156,7 @@ def boolean_operation(
     tool_id: int | str,
     delete_originals: bool = False,
 ) -> str:
-    """Create the union, difference, or intersection of two solid groups."""
-    return call_catalog_tool(
+    return forward_command(
         ctx.request_id,
         "boolean_operation",
         {
@@ -198,7 +165,6 @@ def boolean_operation(
             "tool_id": tool_id,
             "delete_originals": delete_originals,
         },
-        "performing boolean operation",
     )
 
 @mcp.tool()
@@ -213,8 +179,7 @@ def create_mortise_tenon(
     offset_y: float = 0.0,
     offset_z: float = 0.0
 ) -> str:
-    """Create a mortise and tenon joint between two components"""
-    return call_catalog_tool(
+    return forward_command(
         ctx.request_id,
         "create_mortise_tenon",
         {
@@ -227,7 +192,6 @@ def create_mortise_tenon(
             "offset_y": offset_y,
             "offset_z": offset_z,
         },
-        "creating mortise and tenon joint",
     )
 
 @mcp.tool()
@@ -244,8 +208,7 @@ def create_dovetail(
     offset_y: float = 0.0,
     offset_z: float = 0.0
 ) -> str:
-    """Create a dovetail joint between two components"""
-    return call_catalog_tool(
+    return forward_command(
         ctx.request_id,
         "create_dovetail",
         {
@@ -260,7 +223,6 @@ def create_dovetail(
             "offset_y": offset_y,
             "offset_z": offset_z,
         },
-        "creating dovetail joint",
     )
 
 @mcp.tool()
@@ -276,8 +238,7 @@ def create_finger_joint(
     offset_y: float = 0.0,
     offset_z: float = 0.0
 ) -> str:
-    """Create a finger joint (box joint) between two components"""
-    return call_catalog_tool(
+    return forward_command(
         ctx.request_id,
         "create_finger_joint",
         {
@@ -291,7 +252,6 @@ def create_finger_joint(
             "offset_y": offset_y,
             "offset_z": offset_z,
         },
-        "creating finger joint",
     )
 
 @mcp.tool()
@@ -299,12 +259,10 @@ def eval_ruby(
     ctx: Context,
     code: str
 ) -> str:
-    """Evaluate arbitrary Ruby code in Sketchup"""
-    return call_catalog_tool(
+    return forward_command(
         ctx.request_id,
         "eval_ruby",
         {"code": code},
-        "evaluating Ruby",
     )
 
 def main():

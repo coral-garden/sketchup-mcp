@@ -10,46 +10,17 @@ module SU_MCP
   # SketchUp API implementation retained behind the adapter seam while issues
   # #10 and #11 migrate the remaining command families.
   class SketchupCommands
-    COMMAND_METHODS = {
-      'create_component' => :create_component,
-      'delete_component' => :delete_component,
-      'transform_component' => :transform_component,
-      'get_selection' => :get_selection,
-      'export_scene' => :export_scene,
-      'set_material' => :set_material,
-      'boolean_operation' => :boolean_operation,
-      'create_mortise_tenon' => :create_mortise_tenon,
-      'create_dovetail' => :create_dovetail,
-      'create_finger_joint' => :create_finger_joint,
-      'eval_ruby' => :eval_ruby
-    }.freeze
-
-    def initialize(logger: nil, model: nil)
+    def initialize(logger: nil, model: nil, catalog: CommandCatalog.new)
       @logger = logger || ->(_message) {}
       @model = model
+      @catalog = catalog
     end
 
     def call(name, arguments, solid_method: nil)
-      command_method = COMMAND_METHODS[name]
-      raise ArgumentError, "Unknown command: #{name}" unless command_method
-
-      return send(command_method) if command_method == :get_selection
-      if command_method == :boolean_operation
-        return boolean_operation(arguments || {}, solid_method: solid_method)
-      end
-      migrated = %i[
-        create_mortise_tenon create_dovetail create_finger_joint eval_ruby
-      ]
-      if migrated.include?(command_method)
-        keywords = (arguments || {}).transform_keys(&:to_sym)
-        return public_send(command_method, **keywords)
-      end
+      command_method = @catalog.command(name).name
+      return send(command_method, arguments || {}, solid_method: solid_method) if solid_method
 
       send(command_method, arguments || {})
-    end
-
-    def command?(name)
-      COMMAND_METHODS.key?(name)
     end
 
     def list_resources
@@ -349,7 +320,7 @@ module SU_MCP
       end
     end
 
-    def get_selection
+    def get_selection(_params = {})
       model = @model || Sketchup.active_model
       selection = model.selection
 

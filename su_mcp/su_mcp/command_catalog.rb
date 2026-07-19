@@ -5,6 +5,37 @@ module SU_MCP
   class InvalidArguments < StandardError; end
   class UnknownCommand < StandardError; end
 
+  class CommandContract
+    attr_reader :name, :required_arguments, :optional_arguments, :constraints,
+                :execution_error
+
+    def initialize(raw)
+      raw = deep_freeze(raw)
+      @name = raw.fetch('name')
+      @required_arguments = raw.dig('arguments', 'required')
+      @optional_arguments = raw.dig('arguments', 'optional')
+      @constraints = raw.fetch('constraints', {})
+      @execution_error = raw['execution_error']
+      @resource_id_field = raw.dig('success', 'resource_id')
+      freeze
+    end
+
+    def resource_id(result)
+      return nil unless @resource_id_field
+
+      result.key?(@resource_id_field.to_sym) ?
+        result[@resource_id_field.to_sym] : result.fetch(@resource_id_field)
+    end
+
+    private
+
+    def deep_freeze(value)
+      value.each { |key, item| deep_freeze(key); deep_freeze(item) } if value.is_a?(Hash)
+      value.each { |item| deep_freeze(item) } if value.is_a?(Array)
+      value.freeze
+    end
+  end
+
   class CommandCatalog
     SOURCE_PATH = File.expand_path('../../src/sketchup_mcp/command_catalog.json', __dir__)
     PACKAGED_PATH = File.join(__dir__, 'command_catalog.json')
@@ -17,8 +48,12 @@ module SU_MCP
 
     def initialize(path: self.class.default_path)
       raw = JSON.parse(File.read(path))
-      @commands = raw.fetch('commands').to_h { |command| [command.fetch('name'), command] }
+      @commands = raw.fetch('commands').to_h do |raw_command|
+        command = CommandContract.new(raw_command)
+        [command.name, command]
+      end
       @executable_aliases = raw.fetch('executable_aliases')
+      @failure_semantics = raw.fetch('failure_semantics')
     end
 
     def command(name)
@@ -28,11 +63,15 @@ module SU_MCP
       raise UnknownCommand, "Unknown command: #{name}"
     end
 
+    def names
+      @commands.keys.freeze
+    end
+
     def validate(command, arguments)
       raise InvalidArguments, 'arguments must be an object' unless arguments.is_a?(Hash)
 
-      required = command.dig('arguments', 'required')
-      optional = command.dig('arguments', 'optional')
+      required = command.required_arguments
+      optional = command.optional_arguments
       missing = required.keys.reject { |name| arguments.key?(name) }
       raise InvalidArguments, "missing required argument: #{missing.first}" unless missing.empty?
 
@@ -51,11 +90,8 @@ module SU_MCP
       normalized
     end
 
-    def resource_id(command, result)
-      field = command.dig('success', 'resource_id')
-      return nil unless field
-
-      result.key?(field.to_sym) ? result[field.to_sym] : result.fetch(field)
+    def failure_code(semantic)
+      @failure_semantics.fetch(semantic).fetch('jsonrpc_code')
     end
 
     private
@@ -86,6 +122,13 @@ module SU_MCP
       end
       if contract['min_length'] && normalized.length < contract['min_length']
         raise InvalidArguments, "#{name} must not be empty"
+      end
+      conditional_pattern = contract['pattern_if_prefixed']
+      if conditional_pattern && normalized.start_with?(conditional_pattern.fetch('prefix'))
+        pattern_match = Regexp.new(conditional_pattern.fetch('pattern')).match(normalized)
+        unless pattern_match && pattern_match.begin(0).zero? && pattern_match.end(0) == normalized.length
+          raise InvalidArguments, "#{name} #{conditional_pattern.fetch('message')}"
+        end
       end
       forbidden = contract.fetch('forbidden_substrings', [])
       if forbidden.any? { |fragment| normalized.include?(fragment) }
@@ -136,7 +179,7 @@ module SU_MCP
     end
 
     def validate_command_constraints(command, arguments)
-      command.fetch('constraints', {}).fetch('distinct_arguments', []).each do |names|
+      command.constraints.fetch('distinct_arguments', []).each do |names|
         next if names.map { |name| arguments.fetch(name) }.uniq.length == names.length
 
         raise InvalidArguments, "#{names.join(' and ')} must identify different entities"

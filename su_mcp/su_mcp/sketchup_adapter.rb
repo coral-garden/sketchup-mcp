@@ -1,20 +1,8 @@
-require_relative 'command_catalog'
 require_relative 'command_execution_error'
 
 
 module SU_MCP
   class SketchupAdapter
-    OPERATION_NAMES = {
-      'create_component' => 'Create component',
-      'delete_component' => 'Delete component',
-      'transform_component' => 'Transform component',
-      'set_material' => 'Set material',
-      'boolean_operation' => 'Boolean operation',
-      'create_mortise_tenon' => 'Create mortise and tenon',
-      'create_dovetail' => 'Create dovetail',
-      'create_finger_joint' => 'Create finger joint',
-      'eval_ruby' => 'Evaluate Ruby'
-    }.freeze
     COMMON_COLORS = %w[
       red green blue yellow cyan turquoise magenta purple white black brown orange gray grey
     ].freeze
@@ -40,7 +28,7 @@ module SU_MCP
           }
         )
       end
-      result.fetch(:id)
+      result
     end
 
     def delete_component(id:)
@@ -138,12 +126,6 @@ module SU_MCP
       mutate('eval_ruby') { plain_result(@commands.eval_ruby(code: code)) }
     end
 
-    def execute(name, arguments)
-      raise UnknownCommand, "Unknown command: #{name}" unless @commands.command?(name)
-
-      command_result(name, arguments)
-    end
-
     def list_resources
       @commands.list_resources
     end
@@ -153,7 +135,7 @@ module SU_MCP
     def mutate(name, model = active_model)
       started = false
       finalized = false
-      model.start_operation(OPERATION_NAMES.fetch(name), true)
+      model.start_operation(transaction_label(name), true)
       started = true
       result = yield
       model.commit_operation
@@ -169,6 +151,13 @@ module SU_MCP
 
     def active_model
       @model.respond_to?(:call) ? @model.call : @model
+    end
+
+    def transaction_label(command_name)
+      label = command_name.tr('_', ' ')
+      label = label.sub('mortise tenon', 'mortise and tenon')
+      label = label.sub(/\Aeval ruby\z/, 'evaluate Ruby')
+      label.sub(/\A./) { |character| character.upcase }
     end
 
     def require_entity(model, id)

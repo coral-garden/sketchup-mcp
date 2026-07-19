@@ -19,7 +19,7 @@ class ContractSketchup
   def create_component(type:, position:, dimensions:)
     raise @failure if @failure
 
-    @created_id
+    { id: @created_id }
   end
 
   def execute(_name, _arguments)

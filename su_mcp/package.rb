@@ -2,6 +2,7 @@
 
 require 'zip'
 require 'fileutils'
+require_relative 'package_contract'
 
 # Configuration
 EXTENSION_NAME = 'su_mcp'
@@ -17,9 +18,9 @@ FileUtils.mkdir_p(temp_dir)
 FileUtils.cp_r('su_mcp', temp_dir)
 FileUtils.cp('su_mcp.rb', temp_dir)
 FileUtils.cp('extension.json', temp_dir)
-FileUtils.cp(
-  '../src/sketchup_mcp/command_catalog.json',
-  File.join(temp_dir, 'su_mcp', 'command_catalog.json')
+SU_MCP::PackageContract.stage_catalog(
+  repo_root: File.expand_path('..', __dir__),
+  staging_root: temp_dir
 )
 
 # Create zip file

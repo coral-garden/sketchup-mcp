@@ -1,23 +1,21 @@
 require 'json'
 require_relative 'command_catalog'
 require_relative 'command_execution_error'
+require_relative 'command_response_builder'
 
 
 module SU_MCP
   class CommandDispatcher
-    JOINERY_COMMANDS = %w[
-      create_mortise_tenon create_dovetail create_finger_joint
-    ].freeze
-
-    def initialize(executor:, resources: nil)
+    def initialize(executor:, resources: nil, catalog: CommandCatalog.new)
       @executor = executor
       @resources = resources || -> { [] }
+      @responses = CommandResponseBuilder.new(catalog: catalog)
     end
 
     def call(request)
-      return error_response(-32_600, 'Invalid Request', nil) unless request.is_a?(Hash)
+      return @responses.error(-32_600, message: 'Invalid Request', id: nil) unless request.is_a?(Hash)
       if request.key?('jsonrpc') && request['jsonrpc'] != '2.0'
-        return error_response(-32_600, 'Invalid Request', request['id'])
+        return @responses.error(-32_600, message: 'Invalid Request', id: request['id'])
       end
 
       request = legacy_request(request) if request['command']
@@ -29,7 +27,7 @@ module SU_MCP
       when 'prompts/list'
         success_response({ prompts: [], success: true }, request['id'])
       else
-        error_response(-32_601, 'Method not found', request['id'])
+        @responses.error(-32_601, message: 'Method not found', id: request['id'])
       end
     end
 
@@ -45,35 +43,18 @@ module SU_MCP
       arguments = params.fetch('arguments', {})
       raise InvalidArguments, 'arguments must be an object' unless arguments.is_a?(Hash)
 
-      outcome = @executor.call(command, arguments)
-      result = {
-        content: [{ type: 'text', text: JSON.generate(outcome.result) }],
-        isError: false,
-        success: true
-      }
-      result[:resourceId] = outcome.resource_id unless outcome.resource_id.nil?
-
-      success_response(result, request['id'])
-    rescue InvalidArguments => error
-      error_response(-32_602, error.message, request['id'])
-    rescue UnknownCommand => error
-      error_response(-32_601, error.message, request['id'])
-    rescue CommandExecutionError => error
-      execution_error_response(
-        error.message, error.kind, command, request['id'], error.details
+      execution = @executor.call(command, arguments)
+      @responses.success(
+        command: execution.command,
+        result: execution.result,
+        id: request['id']
       )
+    rescue InvalidArguments => error
+      @responses.failure('invalid_arguments', message: error.message, id: request['id'])
+    rescue UnknownCommand => error
+      @responses.error(-32_601, message: error.message, id: request['id'])
     rescue StandardError => error
-      return execution_error_response(
-        'Ruby evaluation failed', 'evaluation_error', command, request['id']
-      ) if command == 'eval_ruby'
-      return execution_error_response(
-        'SketchUp joinery execution failed',
-        'joinery_execution_error',
-        command,
-        request['id']
-      ) if JOINERY_COMMANDS.include?(command)
-
-      error_response(-32_603, error.message, request['id'])
+      @responses.execution_failure(command, error: error, id: request['id'])
     end
 
     def legacy_request(request)
@@ -90,23 +71,6 @@ module SU_MCP
 
     def success_response(result, id)
       { jsonrpc: '2.0', result: result, id: id }
-    end
-
-    def error_response(code, message, id, data = {})
-      {
-        jsonrpc: '2.0',
-        error: { code: code, message: message, data: { success: false }.merge(data) },
-        id: id
-      }
-    end
-
-    def execution_error_response(message, kind, command, id, details = {})
-      error_response(
-        -32_603,
-        message,
-        id,
-        { type: kind, command: command }.merge(details)
-      )
     end
   end
 end

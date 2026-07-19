@@ -25,6 +25,7 @@
     {
       "name": "create_component",
       "description": "Create a grouped primitive in the active SketchUp model.",
+      "failure_action": "creating component",
       "arguments": {
         "required": {},
         "optional": {
@@ -39,6 +40,7 @@
     {
       "name": "delete_component",
       "description": "Delete one entity from the active SketchUp model.",
+      "failure_action": "deleting component",
       "arguments": {
         "required": {
           "id": {"type": "entity_id", "description": "SketchUp entity ID to delete."}
@@ -51,6 +53,7 @@
     {
       "name": "transform_component",
       "description": "Move, rotate, or scale an entity in the active SketchUp model.",
+      "failure_action": "transforming component",
       "arguments": {
         "required": {
           "id": {"type": "entity_id", "description": "SketchUp entity ID to transform."}
@@ -67,6 +70,7 @@
     {
       "name": "get_selection",
       "description": "List the entities currently selected in SketchUp.",
+      "failure_action": "getting selection",
       "arguments": {"required": {}, "optional": {}},
       "success": {"description": "Returns each selected entity's ID and SketchUp type.", "fields": {"entities": "array<{id: integer, type: string}>"}},
       "failures": ["execution_error"]
@@ -74,10 +78,11 @@
     {
       "name": "set_material",
       "description": "Apply a named material or hexadecimal color to an entity.",
+      "failure_action": "setting material",
       "arguments": {
         "required": {
           "id": {"type": "entity_id", "description": "SketchUp entity ID to receive the material."},
-          "material": {"type": "string", "description": "Existing material name, common color name, or #RRGGBB color.", "min_length": 1}
+          "material": {"type": "string", "description": "Existing material name, common color name, or #RRGGBB color.", "min_length": 1, "pattern_if_prefixed": {"prefix": "#", "pattern": "^#[0-9a-fA-F]{6}$", "message": "hexadecimal colors must use #RRGGBB"}}
         },
         "optional": {}
       },
@@ -87,6 +92,7 @@
     {
       "name": "export_scene",
       "description": "Export the active model to a temporary file.",
+      "failure_action": "exporting scene",
       "arguments": {
         "required": {},
         "optional": {
@@ -99,6 +105,8 @@
     {
       "name": "boolean_operation",
       "description": "Create the union, difference, or intersection of two grouped entities.",
+      "failure_action": "performing boolean operation",
+      "constraints": {"distinct_arguments": [["target_id", "tool_id"]]},
       "arguments": {
         "required": {
           "operation": {"type": "string", "description": "Operation: union, difference, or intersection.", "enum": ["union", "difference", "intersection"]},
@@ -115,6 +123,8 @@
     {
       "name": "create_mortise_tenon",
       "description": "Create a mortise and matching tenon between two boards.",
+      "failure_action": "creating mortise and tenon joint",
+      "execution_error": {"message": "SketchUp joinery execution failed", "type": "joinery_execution_error"},
       "constraints": {"distinct_arguments": [["mortise_id", "tenon_id"]]},
       "arguments": {
         "required": {
@@ -136,6 +146,8 @@
     {
       "name": "create_dovetail",
       "description": "Create matching dovetail tails and pins between two boards.",
+      "failure_action": "creating dovetail joint",
+      "execution_error": {"message": "SketchUp joinery execution failed", "type": "joinery_execution_error"},
       "constraints": {"distinct_arguments": [["tail_id", "pin_id"]]},
       "arguments": {
         "required": {
@@ -159,6 +171,8 @@
     {
       "name": "create_finger_joint",
       "description": "Create matching fingers and slots between two boards.",
+      "failure_action": "creating finger joint",
+      "execution_error": {"message": "SketchUp joinery execution failed", "type": "joinery_execution_error"},
       "constraints": {"distinct_arguments": [["board1_id", "board2_id"]]},
       "arguments": {
         "required": {
@@ -180,7 +194,9 @@
     },
     {
       "name": "eval_ruby",
-      "description": "Evaluate Ruby source in SketchUp's top-level binding.",
+      "description": "Evaluate trusted local Ruby source in SketchUp's top-level binding. Snippets must not manage SketchUp operations.",
+      "failure_action": "evaluating Ruby",
+      "execution_error": {"message": "Ruby evaluation failed", "type": "evaluation_error"},
       "arguments": {
         "required": {
           "code": {"type": "string", "description": "Ruby source code to evaluate. Snippets must not manage SketchUp operations.", "min_length": 1, "forbidden_substrings": ["start_operation", "commit_operation", "abort_operation"]}

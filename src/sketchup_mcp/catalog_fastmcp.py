@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -23,20 +23,12 @@ class CatalogFastMCP(FastMCP):
     def __init__(
         self,
         *args: Any,
-        catalog_commands: Collection[str],
         **kwargs: Any,
     ) -> None:
         self._command_catalog = load_command_catalog()
-        governed_names = frozenset(catalog_commands)
-        unknown_names = governed_names - set(self._command_catalog.names)
-        if unknown_names:
-            raise ValueError(
-                "Unknown governed catalog commands: " + ", ".join(sorted(unknown_names))
-            )
-        self._catalog_schemas = {
-            tool["name"]: tool["parameters"]
+        self._catalog_tools = {
+            tool["name"]: tool
             for tool in manifest_tools(self._command_catalog)
-            if tool["name"] in governed_names
         }
         super().__init__(*args, **kwargs)
 
@@ -46,9 +38,12 @@ class CatalogFastMCP(FastMCP):
         tools = await super().list_tools()
         return [
             tool.model_copy(
-                update={"inputSchema": self._catalog_schemas[tool.name]}
+                update={
+                    "description": self._catalog_tools[tool.name]["description"],
+                    "inputSchema": self._catalog_tools[tool.name]["parameters"],
+                }
             )
-            if tool.name in self._catalog_schemas
+            if tool.name in self._catalog_tools
             else tool
             for tool in tools
         ]
@@ -58,7 +53,7 @@ class CatalogFastMCP(FastMCP):
     ) -> Sequence[ContentBlock] | dict[str, Any]:
         """Reject invalid raw arguments before FastMCP can coerce or dispatch."""
 
-        if name in self._catalog_schemas:
+        if name in self._catalog_tools:
             try:
                 validate_command_arguments(name, arguments, self._command_catalog)
             except InvalidCommandArguments as error:

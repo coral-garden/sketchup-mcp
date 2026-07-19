@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+import subprocess
 import unittest
 
 from sketchup_mcp.bridge import (
@@ -8,8 +9,8 @@ from sketchup_mcp.bridge import (
     BridgeProtocolError,
     InMemoryBridgeAdapter,
 )
-from sketchup_mcp.mcp_server import CommandForwarder, CreateComponentTool
-from sketchup_mcp.command_catalog import manifest_tools
+from sketchup_mcp.mcp_server import CommandForwarder
+from sketchup_mcp.command_catalog import load_command_catalog, manifest_tools
 
 
 CONTRACT = json.loads(
@@ -29,7 +30,159 @@ JOINERY_EVAL_CONTRACT = json.loads(
 )
 
 
+def call_create_component(client, request_id, **arguments):
+    from sketchup_mcp import server
+
+    context = type("RequestContext", (), {"request_id": request_id})()
+    with server.use_bridge_client(client):
+        return server.create_component(context, **arguments)
+
+
 class PythonRuntimeTest(unittest.TestCase):
+    def test_python_fastmcp_commands_execute_through_the_real_ruby_bridge(self):
+        from mcp.shared.memory import create_connected_server_and_client_session
+        from sketchup_mcp import server as exported_server
+
+        commands = (
+            SCENE_GEOMETRY_CONTRACT["commands"]
+            + JOINERY_EVAL_CONTRACT["commands"]
+        )
+        fixture = (
+            Path(__file__).parents[1]
+            / "test/fixtures/ruby_command_contract_fixture.rb"
+        )
+        process = subprocess.Popen(
+            ["ruby", str(fixture)],
+            text=True,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        communicated = False
+        try:
+            ready_frame = process.stdout.readline()
+            if not ready_frame:
+                _stdout, stderr = process.communicate(timeout=2)
+                communicated = True
+                self.fail(f"Ruby command fixture failed to start: {stderr}")
+            port = json.loads(ready_frame)["port"]
+
+            async def call_all_tools():
+                client = BridgeClient.for_tcp(
+                    port=port,
+                    timeout=2,
+                    max_attempts=1,
+                )
+                with exported_server.use_bridge_client(client):
+                    async with create_connected_server_and_client_session(
+                        exported_server.mcp
+                    ) as session:
+                        return [
+                            await session.call_tool(
+                                command["name"], command["arguments"]
+                            )
+                            for command in commands
+                        ]
+
+            results = asyncio.run(call_all_tools())
+            _stdout, stderr = process.communicate(input="done\n", timeout=2)
+            communicated = True
+            self.assertEqual(0, process.returncode, stderr)
+        finally:
+            if not communicated:
+                process.terminate()
+                try:
+                    process.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate(timeout=2)
+
+        for command, result in zip(commands, results, strict=True):
+            self.assertFalse(result.isError, command["name"])
+            self.assertEqual(
+                json.dumps(command["wire_result"]), result.content[0].text
+            )
+
+    def test_all_eleven_catalog_commands_register_and_reach_the_bridge(self):
+        from mcp.shared.memory import create_connected_server_and_client_session
+        from sketchup_mcp import server as exported_server
+
+        commands = (
+            SCENE_GEOMETRY_CONTRACT["commands"]
+            + JOINERY_EVAL_CONTRACT["commands"]
+        )
+        by_name = {command["name"]: command for command in commands}
+        catalog = load_command_catalog()
+        self.assertEqual(set(catalog.names), set(by_name))
+        registered = {
+            tool.name: tool for tool in asyncio.run(exported_server.mcp.list_tools())
+        }
+        self.assertEqual(set(catalog.names), set(registered))
+        self.assertEqual(
+            {command.name: command.description for command in catalog.commands},
+            {name: tool.description for name, tool in registered.items()},
+        )
+        adapter = InMemoryBridgeAdapter(
+            lambda request: {
+                "jsonrpc": "2.0",
+                "result": by_name[request["params"]["name"]]["wire_result"],
+                "id": request["id"],
+            }
+        )
+
+        async def call_all_tools():
+            with exported_server.use_bridge_client(BridgeClient(adapter=adapter)):
+                async with create_connected_server_and_client_session(
+                    exported_server.mcp
+                ) as session:
+                    return [
+                        await session.call_tool(
+                            command["name"], command["arguments"]
+                        )
+                        for command in commands
+                    ]
+
+        results = asyncio.run(call_all_tools())
+
+        for command, result in zip(commands, results, strict=True):
+            self.assertFalse(result.isError, command["name"])
+            self.assertEqual(
+                json.dumps(command["wire_result"]), result.content[0].text
+            )
+        self.assertEqual(
+            [command["name"] for command in commands],
+            [request["params"]["name"] for request in adapter.requests],
+        )
+
+    def test_every_command_uses_the_catalogued_forwarding_error_path(self):
+        catalog = load_command_catalog()
+
+        for command in catalog.commands:
+            with self.subTest(command=command.name):
+                adapter = InMemoryBridgeAdapter(
+                    lambda request: {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32603,
+                            "message": "stable command failure",
+                            "data": {"success": False},
+                        },
+                        "id": request["id"],
+                    }
+                )
+
+                result = CommandForwarder(BridgeClient(adapter=adapter)).call(
+                    command.name,
+                    {},
+                    request_id=f"failure-{command.name}",
+                )
+
+                self.assertEqual(
+                    f"Error {command.failure_action}: "
+                    "SketchUp bridge error -32603: stable command failure",
+                    result,
+                )
+
     def test_joinery_and_eval_commands_share_the_catalogued_forwarding_interface(self):
         for command in JOINERY_EVAL_CONTRACT["commands"]:
             with self.subTest(command=command["name"]):
@@ -483,11 +636,11 @@ class PythonRuntimeTest(unittest.TestCase):
 
     def test_create_component_succeeds_through_the_bridge_seam(self):
         adapter = InMemoryBridgeAdapter.returning(CONTRACT["success_result"])
-        tool = CreateComponentTool(BridgeClient(adapter=adapter))
 
-        result = tool.create_component(
-            request_id="mcp-create-17",
-            component_type="cube",
+        result = call_create_component(
+            BridgeClient(adapter=adapter),
+            "mcp-create-17",
+            type="cube",
             position=[1, 2, 3],
             dimensions=[4, 5, 6],
         )
@@ -516,9 +669,8 @@ class PythonRuntimeTest(unittest.TestCase):
         for request_id in CONTRACT["success_ids"]:
             with self.subTest(request_id=request_id):
                 adapter = InMemoryBridgeAdapter.returning(CONTRACT["success_result"])
-                tool = CreateComponentTool(BridgeClient(adapter=adapter))
 
-                tool.create_component(request_id=request_id)
+                call_create_component(BridgeClient(adapter=adapter), request_id)
 
                 self.assertEqual(
                     {
@@ -544,13 +696,10 @@ class PythonRuntimeTest(unittest.TestCase):
                         "id": request["id"],
                     }
                 )
-                tool = CreateComponentTool(BridgeClient(adapter=adapter))
-
-                result = tool.create_component(
-                    request_id=fixture["request_id"],
-                    component_type=fixture.get("arguments", CONTRACT["defaults"])[
-                        "type"
-                    ],
+                result = call_create_component(
+                    BridgeClient(adapter=adapter),
+                    fixture["request_id"],
+                    type=fixture.get("arguments", CONTRACT["defaults"])["type"],
                 )
 
                 self.assertEqual(
@@ -611,11 +760,11 @@ class PythonRuntimeTest(unittest.TestCase):
             raise OSError("listener offline")
 
         adapter = InMemoryBridgeAdapter(unavailable)
-        tool = CreateComponentTool(
-            BridgeClient(adapter=adapter, max_attempts=fixture["attempts"])
-        )
 
-        result = tool.create_component(request_id=fixture["request_id"])
+        result = call_create_component(
+            BridgeClient(adapter=adapter, max_attempts=fixture["attempts"]),
+            fixture["request_id"],
+        )
 
         self.assertEqual(
             "Error creating component: SketchUp bridge unavailable at "
@@ -661,12 +810,12 @@ class PythonRuntimeTest(unittest.TestCase):
 
     def test_create_component_logs_metadata_without_raw_arguments(self):
         adapter = InMemoryBridgeAdapter.returning(CONTRACT["success_result"])
-        tool = CreateComponentTool(BridgeClient(adapter=adapter))
 
         with self.assertLogs("SketchupMCPServer", level="INFO") as captured:
-            tool.create_component(
-                request_id="safe-log-id",
-                component_type="private-component-input",
+            call_create_component(
+                BridgeClient(adapter=adapter),
+                "safe-log-id",
+                type="private-component-input",
                 position=[101, 202, 303],
                 dimensions=[404, 505, 606],
             )
@@ -680,10 +829,10 @@ class PythonRuntimeTest(unittest.TestCase):
 
     def test_empty_vectors_are_not_replaced_by_defaults(self):
         adapter = InMemoryBridgeAdapter.returning(CONTRACT["success_result"])
-        tool = CreateComponentTool(BridgeClient(adapter=adapter))
 
-        tool.create_component(
-            request_id="empty-vectors",
+        call_create_component(
+            BridgeClient(adapter=adapter),
+            "empty-vectors",
             position=[],
             dimensions=[],
         )

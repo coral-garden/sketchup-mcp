@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import argparse
-import ast
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
-import re
+import subprocess
 import sys
 from typing import Iterable, Mapping
 
 from .command_catalog import CommandCatalog, load_command_catalog
+from .command_docs import stale_documents
 
 
 @dataclass(frozen=True)
@@ -50,8 +51,9 @@ def compare_commands(
         name: accepted.renamed_commands[name]
         for name in sorted(observed & set(accepted.renamed_commands))
     }
-    normalized = (observed - set(differently_named)) | set(
-        differently_named.values()
+    executable_aliases = observed & set(accepted.executable_aliases)
+    normalized = (observed - executable_aliases) | set(
+        accepted.executable_aliases[name] for name in executable_aliases
     )
     accepted_names = set(accepted.names)
 
@@ -63,88 +65,94 @@ def compare_commands(
     )
 
 
-def _python_mcp_commands(source: str) -> set[str]:
-    module = ast.parse(source)
-    commands: set[str] = set()
-    for node in ast.walk(module):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            called = decorator.func if isinstance(decorator, ast.Call) else decorator
-            if (
-                isinstance(called, ast.Attribute)
-                and isinstance(called.value, ast.Name)
-                and called.value.id == "mcp"
-                and called.attr == "tool"
-            ):
-                commands.add(node.name)
-    return commands
-
-
-def _ruby_extension_commands(command_source: str, executor_source: str) -> set[str]:
-    command_map = re.search(
-        r"COMMAND_METHODS\s*=\s*\{(?P<entries>.*?)\}\s*\.freeze",
-        command_source,
-        flags=re.DOTALL,
+def _python_mcp_commands(root: Path) -> set[str]:
+    script = """
+import asyncio
+import json
+from sketchup_mcp.server import mcp
+print(json.dumps([tool.name for tool in asyncio.run(mcp.list_tools())]))
+"""
+    environment = os.environ.copy()
+    existing_path = environment.get("PYTHONPATH")
+    source_path = str(root / "src")
+    environment["PYTHONPATH"] = (
+        source_path if not existing_path else os.pathsep.join((source_path, existing_path))
     )
-    if command_map is None:
-        return set()
-    commands = set(
-        re.findall(r"['\"]([a-z][a-z0-9_]*)['\"]\s*=>", command_map["entries"])
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=root,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
     )
-    rename_map = re.search(
-        r"RENAMED_COMMANDS\s*=\s*\{(?P<entries>.*?)\}\s*\.freeze",
-        executor_source,
-        flags=re.DOTALL,
+    return set(json.loads(completed.stdout))
+
+
+def _ruby_execution_commands(root: Path) -> set[str]:
+    script = """
+require 'json'
+require './su_mcp/su_mcp/command_catalog'
+require './su_mcp/su_mcp/sketchup_adapter'
+catalog = SU_MCP::CommandCatalog.new
+adapter = SU_MCP::SketchupAdapter.new(commands: Object.new, model: Object.new)
+puts JSON.generate(catalog.names.select { |name| adapter.respond_to?(name) })
+"""
+    completed = subprocess.run(
+        ["ruby", "-e", script],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
     )
-    if rename_map is not None:
-        commands.update(
-            re.findall(
-                r"['\"]([a-z][a-z0-9_]*)['\"]\s*=>",
-                rename_map["entries"],
-            )
-        )
-    return commands
+    return set(json.loads(completed.stdout))
 
 
-def _manifest_commands(source: str) -> set[str]:
-    manifest = json.loads(source)
-    return {tool["name"] for tool in manifest["tools"]}
-
-
-def _readme_commands(source: str) -> set[str]:
-    tools_heading = re.search(r"^#### Tools\s*$", source, flags=re.MULTILINE)
-    if tools_heading is None:
-        return set()
-    next_heading = re.search(
-        r"^#{1,4}\s+", source[tools_heading.end() :], flags=re.MULTILINE
+def _package_catalog_is_exact(root: Path) -> bool:
+    script = """
+require 'tmpdir'
+require './su_mcp/package_contract'
+Dir.mktmpdir do |staging_root|
+  packaged = SU_MCP::PackageContract.stage_catalog(
+    repo_root: Dir.pwd,
+    staging_root: staging_root
+  )
+  source = File.join(Dir.pwd, 'src', 'sketchup_mcp', 'command_catalog.json')
+  puts(File.binread(source) == File.binread(packaged) ? 'true' : 'false')
+end
+"""
+    completed = subprocess.run(
+        ["ruby", "-e", script],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
     )
-    section_end = (
-        tools_heading.end() + next_heading.start()
-        if next_heading is not None
-        else len(source)
-    )
-    section = source[tools_heading.end() : section_end]
-    return set(re.findall(r"^\s*[*-]\s+`([^`]+)`", section, flags=re.MULTILINE))
+    return completed.stdout.strip() == "true"
 
 
-def repository_command_names(repo_root: str | Path) -> dict[str, set[str]]:
-    """Read command names from each current consumer without executing it."""
+def repository_command_names(
+    repo_root: str | Path,
+    catalog: CommandCatalog | None = None,
+) -> dict[str, set[str]]:
+    """Observe live registrations, execution reachability, docs, and packaging."""
 
-    root = Path(repo_root)
+    root = Path(repo_root).resolve()
+    accepted = catalog or load_command_catalog()
+    accepted_names = set(accepted.names)
+    try:
+        stale = set(stale_documents(root, accepted))
+    except (OSError, ValueError):
+        stale = {"README.md", "docs/command-catalog.md"}
     return {
-        "python_mcp_server": _python_mcp_commands(
-            (root / "src/sketchup_mcp/server.py").read_text(encoding="utf-8")
+        "fastmcp_registration": _python_mcp_commands(root),
+        "ruby_execution": _ruby_execution_commands(root),
+        "readme": set() if "README.md" in stale else accepted_names,
+        "command_docs": (
+            set() if "docs/command-catalog.md" in stale else accepted_names
         ),
-        "ruby_extension": _ruby_extension_commands(
-            (root / "su_mcp/su_mcp/sketchup_commands.rb").read_text(encoding="utf-8"),
-            (root / "su_mcp/su_mcp/command_executor.rb").read_text(encoding="utf-8"),
-        ),
-        "manifest": _manifest_commands(
-            (root / "sketchup.json").read_text(encoding="utf-8")
-        ),
-        "readme": _readme_commands(
-            (root / "README.md").read_text(encoding="utf-8")
+        "package_catalog": (
+            accepted_names if _package_catalog_is_exact(root) else set()
         ),
     }
 
@@ -158,7 +166,7 @@ def inspect_repository(
     accepted = catalog or load_command_catalog()
     return tuple(
         compare_commands(consumer, names, accepted)
-        for consumer, names in repository_command_names(repo_root).items()
+        for consumer, names in repository_command_names(repo_root, accepted).items()
     )
 
 

@@ -62,17 +62,19 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 
 #### Tools
 
-* `create_component` - Create a new component with specified parameters
-* `delete_component` - Remove a component from the scene
-* `transform_component` - Move, rotate, or scale a component
-* `get_selection` - Get the entities currently selected in SketchUp
-* `set_material` - Apply materials to components
-* `export_scene` - Export the current scene to various formats
-* `boolean_operation` - Create a union, difference, or intersection of two solid groups
-* `create_mortise_tenon` - Create a mortise-and-tenon joint between two boards
-* `create_dovetail` - Create a dovetail joint between two boards
-* `create_finger_joint` - Create a finger joint between two boards
-* `eval_ruby` - Execute trusted local Ruby code with JSON-safe results. Snippets must not call `start_operation`, `commit_operation`, or `abort_operation`; the command owns rollback and commit.
+<!-- command-catalog:start -->
+* `create_component` - Create a grouped primitive in the active SketchUp model.
+* `delete_component` - Delete one entity from the active SketchUp model.
+* `transform_component` - Move, rotate, or scale an entity in the active SketchUp model.
+* `get_selection` - List the entities currently selected in SketchUp.
+* `set_material` - Apply a named material or hexadecimal color to an entity.
+* `export_scene` - Export the active model to a temporary file.
+* `boolean_operation` - Create the union, difference, or intersection of two grouped entities.
+* `create_mortise_tenon` - Create a mortise and matching tenon between two boards.
+* `create_dovetail` - Create matching dovetail tails and pins between two boards.
+* `create_finger_joint` - Create matching fingers and slots between two boards.
+* `eval_ruby` - Evaluate trusted local Ruby source in SketchUp's top-level binding. Snippets must not manage SketchUp operations.
+<!-- command-catalog:end -->
 
 ### Example Commands
 

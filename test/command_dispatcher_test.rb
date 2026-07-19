@@ -24,7 +24,7 @@ class ControlledSketchupAdapter
     }
     raise @failure if @failure
 
-    @created_id
+    { id: @created_id }
   end
 
   def execute(name, arguments)
