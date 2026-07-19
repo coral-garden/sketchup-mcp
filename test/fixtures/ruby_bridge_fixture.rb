@@ -7,7 +7,7 @@ listener = SU_MCP::BridgeListener.new(port: 0, handler: ->(request) {
   request_count += 1
   {
     jsonrpc: '2.0',
-    result: { request: request_count },
+    result: { request: request_count, request_id: request['id'] },
     id: request['id']
   }
 })

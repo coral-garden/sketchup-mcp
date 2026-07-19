@@ -101,6 +101,102 @@ def delay_without_response(_client, _request):
     time.sleep(0.05)
 
 
+class LegacyPersistentBridgeClient:
+    """Test fixture that reintroduces the pre-ADR persistent socket lifecycle."""
+
+    def __init__(self, port, timeout=1):
+        self._connection = socket.create_connection(
+            ("127.0.0.1", port), timeout=timeout
+        )
+        self._connection.settimeout(timeout)
+        self.responses = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        self._connection.close()
+
+    def send_command(self, method, params=None, request_id=None):
+        request = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {"name": method, "arguments": params or {}},
+            "id": request_id,
+        }
+        try:
+            self._connection.sendall(json.dumps(request).encode("utf-8") + b"\n")
+            response_frame = self._read_frame()
+        except OSError as error:
+            raise ConnectionError(
+                "bridge closed before completing a response frame"
+            ) from error
+        response = json.loads(response_frame.decode("utf-8"))
+        if response.get("id") != request_id:
+            raise BridgeProtocolError(
+                f"response id {response.get('id')!r} does not match "
+                f"request id {request_id!r}"
+            )
+        self.responses.append(response)
+        return response["result"]
+
+    def _read_frame(self):
+        frame = bytearray()
+        while not frame.endswith(b"\n"):
+            chunk = self._connection.recv(8192)
+            if not chunk:
+                raise ConnectionError(
+                    "bridge closed before completing a response frame"
+                )
+            frame.extend(chunk)
+        return bytes(frame[:-1])
+
+
+class RubyCloseBridgeFixture:
+    """Run the real one-request-per-connection Ruby listener fixture."""
+
+    def __init__(self, fixture_path):
+        self._fixture_path = fixture_path
+        self._process = None
+        self._communicated = False
+        self.port = None
+
+    def __enter__(self):
+        self._process = subprocess.Popen(
+            ["ruby", str(self._fixture_path)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        ready_frame = self._process.stdout.readline()
+        if not ready_frame:
+            _stdout, stderr = self._process.communicate(timeout=2)
+            self._communicated = True
+            raise AssertionError(f"Ruby bridge fixture failed to start: {stderr}")
+        self.port = json.loads(ready_frame)["port"]
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        if self._communicated:
+            return
+        if self._process.poll() is None:
+            self._process.terminate()
+        try:
+            self._process.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            self._process.communicate(timeout=2)
+        self._communicated = True
+
+    def wait_for_clean_exit(self):
+        _stdout, stderr = self._process.communicate(timeout=2)
+        self._communicated = True
+        if self._process.returncode != 0:
+            raise AssertionError(
+                f"Ruby bridge fixture exited with {self._process.returncode}: {stderr}"
+            )
+
+
 class BridgeLifecycleTest(unittest.TestCase):
     def test_request_and_response_are_newline_framed_and_preserve_id(self):
         with ScriptedBridge([send_result({"ok": True})]) as bridge:
@@ -226,7 +322,7 @@ class BridgeLifecycleTest(unittest.TestCase):
 
         self.assertEqual({"chunked": True}, result)
 
-    def test_regression_ruby_closes_connection_and_next_request_reconnects(self):
+    def test_consecutive_commands_use_independent_scripted_connections(self):
         with ScriptedBridge(
             [send_result({"request": 1}), send_result({"request": 2})]
         ) as bridge:
@@ -277,67 +373,40 @@ class BridgeLifecycleTest(unittest.TestCase):
 
         create_connection.assert_called_once_with(("127.0.0.1", 12_345), 0.25)
 
-    def test_regression_reproduces_legacy_persistence_then_uses_new_connection(self):
+    def test_ruby_close_breaks_legacy_persistence_but_not_bridge_client(self):
         fixture = (
             Path(__file__).parent.parent / "test" / "fixtures" / "ruby_bridge_fixture.rb"
         )
-        process = subprocess.Popen(
-            ["ruby", str(fixture)],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        legacy_connection = None
-        try:
-            ready = json.loads(process.stdout.readline())
-            legacy_connection = socket.create_connection(
-                ("127.0.0.1", ready["port"]), timeout=1
-            )
-            legacy_request = {
-                "jsonrpc": "2.0",
-                "method": "tools/call",
-                "params": {"name": "get_selection", "arguments": {}},
-                "id": "legacy-1",
-            }
-            legacy_connection.sendall(
-                json.dumps(legacy_request).encode("utf-8") + b"\n"
-            )
-            legacy_response = bytearray()
-            while not legacy_response.endswith(b"\n"):
-                legacy_response.extend(legacy_connection.recv(4096))
-            self.assertEqual(
-                {"request": 1}, json.loads(legacy_response)["result"]
-            )
-            second_exchange_failed = False
-            try:
-                legacy_connection.sendall(
-                    json.dumps({**legacy_request, "id": "legacy-2"}).encode(
-                        "utf-8"
-                    )
-                    + b"\n"
+        with RubyCloseBridgeFixture(fixture) as legacy_bridge:
+            with LegacyPersistentBridgeClient(legacy_bridge.port) as legacy_client:
+                with self.assertRaisesRegex(
+                    ConnectionError,
+                    "bridge closed before completing a response frame",
+                ):
+                    self.assert_two_commands_complete(legacy_client)
+                self.assertEqual(
+                    ["lifecycle-1"],
+                    [response["id"] for response in legacy_client.responses],
                 )
-                second_exchange_failed = legacy_connection.recv(1) == b""
-            except OSError:
-                second_exchange_failed = True
-            self.assertTrue(
-                second_exchange_failed,
-                "a second exchange unexpectedly succeeded on the closed connection",
-            )
-            legacy_connection.close()
 
-            client = BridgeClient.for_tcp(port=ready["port"])
-            reconnected = client.send_command("get_selection", request_id="ruby-2")
+        with RubyCloseBridgeFixture(fixture) as current_bridge:
+            client = BridgeClient.for_tcp(port=current_bridge.port)
+            self.assert_two_commands_complete(client)
+            current_bridge.wait_for_clean_exit()
 
-            _stdout, stderr = process.communicate(timeout=2)
-        finally:
-            if legacy_connection is not None:
-                legacy_connection.close()
-            if process.poll() is None:
-                process.kill()
-            process.communicate()
+    def assert_two_commands_complete(self, client):
+        results = [
+            client.send_command("get_selection", request_id="lifecycle-1"),
+            client.send_command("get_selection", request_id="lifecycle-2"),
+        ]
 
-        self.assertEqual({"request": 2}, reconnected)
-        self.assertEqual(0, process.returncode, stderr)
+        self.assertEqual(
+            [
+                {"request": 1, "request_id": "lifecycle-1"},
+                {"request": 2, "request_id": "lifecycle-2"},
+            ],
+            results,
+        )
 
     def test_mcp_tool_reports_an_unavailable_bridge_port(self):
         from sketchup_mcp import server
