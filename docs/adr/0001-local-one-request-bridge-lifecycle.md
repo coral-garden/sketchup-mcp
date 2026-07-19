@@ -45,11 +45,13 @@ at 127.0.0.1:<port> after <attempts> attempts`. If another local process owns th
 port, its observable behavior maps to the applicable timeout, protocol, or remote
 error.
 
-The accepted trust boundary is the local operating-system user. The bridge has no
-application authentication, and any local process running as that user can invoke
-commands, including `eval_ruby`. The listener must never bind a non-loopback address.
-Widening access beyond loopback requires a new security decision and authentication
-design.
+The enforced network boundary is the local machine, not an operating-system
+account. IPv4 loopback excludes remote hosts but does not verify the connecting
+account or process. The bridge has no application authentication or peer-credential
+check, so any local process or user able to connect can invoke commands, including
+`eval_ruby`. The listener must never bind a non-loopback address. Widening access
+beyond loopback, or isolating the bridge from other local accounts and processes,
+requires a new security decision and authentication or operating-system isolation.
 
 ## Consequences
 
@@ -66,3 +68,5 @@ design.
   the SketchUp process.
 - Loopback binding is a required security invariant and is covered by an executable
   listener test.
+- Loopback excludes remote network peers but provides no local process or account
+  authentication.

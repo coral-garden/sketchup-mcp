@@ -1,98 +1,197 @@
-# SketchUp MCP - SketchUp Model Context Protocol Integration
+# SketchUp MCP
 
-SketchupMCP connects Sketchup to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Sketchup. This integration enables prompt-assisted 3D modeling, scene creation, and manipulation in Sketchup.
+SketchUp MCP lets an MCP host inspect and modify the active model in SketchUp
+Desktop. It combines a Python MCP server with a SketchUp extension; both must run
+on the same computer for a tool call to reach the model.
 
-Big Shoutout to [Blender MCP](https://github.com/ahujasid/blender-mcp) for the inspiration and structure.
+## Runtime topology
 
-## Features
-
-* **Two-way communication**: Connect Claude AI to Sketchup through a TCP socket connection
-* **Component manipulation**: Create, modify, delete, and transform components in Sketchup
-* **Material control**: Apply and modify materials and colors
-* **Scene inspection**: Get detailed information about the current Sketchup scene
-* **Selection handling**: Get and manipulate selected components
-* **Ruby code evaluation**: Execute arbitrary Ruby code directly in SketchUp for advanced operations
-
-## Runtime Topology
-
-The roles are deliberately distinct:
+The names below describe separate runtime roles. A request travels through them
+in this order:
 
 ```text
 MCP host
   -> MCP client
-  -> Python MCP server over stdio
-  -> Python bridge client over loopback TCP
-  -> Ruby bridge listener
-  -> command executor
-  -> SketchUp adapter
-  -> SketchUp runtime
+  -> stdio
+  -> Python MCP server
+  -> bridge client
+  -> loopback TCP at 127.0.0.1:9876
+  -> SketchUp extension
+       extension runtime (owns bridge availability)
+       Ruby bridge listener
+         -> command executor
+         -> SketchUp adapter
+         -> SketchUp runtime and its active model
 ```
 
-The canonical Python MCP server module is `sketchup_mcp.mcp_server`. The legacy
-`sketchup_mcp.server:mcp` import remains an identity-preserving compatibility
-path. Both the `sketchup-mcp` command and `python -m sketchup_mcp` remain
-supported launch paths. The historical `python -m sketchup_mcp.server` launch
-also remains available for compatibility; new integrations should use the
-`sketchup-mcp` command or `python -m sketchup_mcp`. The installed SketchUp
-extension runs an `ExtensionRuntime`; it is not an MCP server. The legacy
-`su_mcp` loader and support-directory names remain compatibility identifiers.
+The MCP host owns the MCP client and launches the Python MCP server over stdio.
+The bridge client then opens one loopback connection per command. Inside the
+SketchUp extension, the extension runtime owns the Ruby bridge listener, which
+hands the command to the executor and adapter that use the live SketchUp model.
+Because the bridge is loopback-only, the MCP host and SketchUp must run on the
+same machine. Running all components under one intended account is operationally
+simplest, but the TCP bridge does not enforce an account identity.
 
-## Installation
+## Prerequisites
 
-### Python Packaging
+- SketchUp Desktop for macOS or Windows with permission to install an RBZ.
+- Git and Python 3.10 or newer; `python --version` must resolve to that Python.
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/) for the
+  isolated Python environment.
+- An MCP host that can launch a local stdio server. The verified example below
+  uses Claude Desktop; its configuration flow follows the
+  [official local-server guide](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
 
-We're using uv so you'll need to ```brew install uv```
+The supported path below builds both sides from one clean checkout so their
+project version and command catalog cannot drift. It does not depend on an
+unversioned package or an unverified binary.
 
-### Sketchup Extension
+## Install and verify
 
-The RBZ builder requires Python 3.10 or newer and uses only the Python standard
-library. From the repository root, build and automatically validate the
-extension package with:
+### 1. Build version 1.6.1 from a clean checkout
+
+Clone the repository, enter it, and confirm the checkout has no local changes:
+
+```sh
+git clone https://github.com/coral-garden/sketchup-mcp.git
+cd sketchup-mcp
+git status --short
+python -c "from pathlib import Path; assert Path('VERSION').read_text().strip() == '1.6.1'"
+```
+
+`git status --short` must print nothing. Build the extension package, then ask
+the same builder to validate its layout, bytes, version, and load paths:
 
 ```sh
 python scripts/build.py
+python scripts/build.py --check dist/sketchup-mcp-1.6.1.rbz
 ```
 
-The command writes the versioned RBZ to `dist/` and prints its SHA-256 digest.
-To validate an existing artifact without rebuilding it, run:
+The first command prints `Built dist/sketchup-mcp-1.6.1.rbz`, `Version: 1.6.1`,
+and the artifact's SHA-256. Keep that digest with the file you install.
+
+If a [GitHub release for `v1.6.1`](https://github.com/coral-garden/sketchup-mcp/releases)
+becomes available, use its RBZ only when all three published values agree: the
+tag is `v1.6.1`, the filename is
+`sketchup-mcp-1.6.1.rbz`, and the published SHA-256 matches the downloaded file.
+Run the `--check` command above from a clean `v1.6.1` checkout as a second
+validation. Compare its printed SHA-256 with the published SHA-256. Until those
+release facts are present, use the source-build path.
+
+### 2. Install the extension in SketchUp
+
+1. Open **Extensions > Extension Manager** in SketchUp.
+2. Click **Install Extension** and choose
+   `dist/sketchup-mcp-1.6.1.rbz` from the checkout.
+3. Accept SketchUp's third-party warning only if you trust this checkout.
+4. Confirm **SketchUp MCP** is enabled and shows version `1.6.1`.
+5. Completely quit and reopen SketchUp so a previous extension load cannot
+   remain in memory.
+
+These steps follow SketchUp's
+[official manual RBZ installation instructions](https://help.sketchup.com/en/extension-warehouse/installing-trial-extension).
+
+### 3. Start the bridge listener
+
+In SketchUp choose **Extensions > SketchUp MCP > Start Bridge**. Open the Ruby
+Console and confirm both role-specific messages appear:
+
+```text
+SketchUp MCP: Bridge listener: listening on 127.0.0.1:9876
+SketchUp MCP: Extension runtime: bridge started
+```
+
+Leave SketchUp and the model open. **Stop Bridge** intentionally makes every MCP
+tool call fail until **Start Bridge** is chosen again.
+
+### 4. Install the Python MCP server
+
+From the same checkout, create a private environment and install this exact
+source tree:
 
 ```sh
-python scripts/build.py --check path/to/sketchup-mcp-X.Y.Z.rbz
+uv venv --python 3.12
+uv pip install --python .venv .
 ```
 
-1. Download or build the latest `.rbz` file
-2. In Sketchup, go to Window > Extension Manager
-3. Click "Install Extension" and select the downloaded `.rbz` file
-4. Restart Sketchup
+Confirm the installed Python MCP server has the same project version:
 
-## Usage
+```sh
+.venv/bin/python -c "import sketchup_mcp; assert sketchup_mcp.__version__ == '1.6.1'"
+```
 
-### Starting the Connection
+On Windows, run the equivalent executable at
+`.venv\Scripts\python.exe`. Do not leave `sketchup-mcp` running in a terminal:
+the MCP host launches it and owns its stdio connection in the next step.
 
-1. In SketchUp, go to Extensions > SketchUp MCP > Start Bridge
-2. The Ruby bridge listener will start on the default port (9876)
-3. Make sure the Python MCP server is running in your terminal
+### 5. Configure and restart Claude Desktop
 
-### Using with Claude
+In Claude Desktop open **Settings > Developer > Edit Config**. This edits
+`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS or
+`%APPDATA%\Claude\claude_desktop_config.json` on Windows. Merge one of the
+following `sketchup` entries into any existing `mcpServers` object and replace
+`you` with the real checkout path. The `command` must be an absolute path.
 
-Configure Claude to use the MCP server by adding the following to your Claude configuration:
+macOS:
 
 ```json
-    "mcpServers": {
-        "sketchup": {
-            "command": "uvx",
-            "args": [
-                "sketchup-mcp"
-            ]
-        }
+{
+  "mcpServers": {
+    "sketchup": {
+      "command": "/Users/you/Code/sketchup-mcp/.venv/bin/sketchup-mcp",
+      "args": []
     }
+  }
+}
 ```
 
-This will pull the [latest from PyPI](https://pypi.org/project/sketchup-mcp/)
+Windows:
 
-Once connected, Claude can interact with Sketchup using the following capabilities:
+```json
+{
+  "mcpServers": {
+    "sketchup": {
+      "command": "C:\\Users\\you\\Code\\sketchup-mcp\\.venv\\Scripts\\sketchup-mcp.exe",
+      "args": []
+    }
+  }
+}
+```
 
-#### Tools
+Save valid JSON, completely quit Claude Desktop, and reopen it. A window reload
+is not enough: the full restart makes the MCP host launch the Python MCP server.
+Open **Manage connectors**, select `sketchup`, and confirm `get_selection` is in
+the tool list.
+
+### 6. Prove the full path with `get_selection`
+
+Clear the SketchUp selection, keep the bridge running, and ask the MCP host:
+
+> Use the SketchUp MCP `get_selection` tool once. Show its raw result and do not
+> modify the model.
+
+The MCP tool's text should decode to this success envelope:
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"entities\":[]}"
+    }
+  ],
+  "isError": false,
+  "success": true
+}
+```
+
+`"entities":[]` is the expected command result for an empty selection. Receiving
+it proves that tool discovery and stdio reached the Python MCP server, the bridge
+client reached the Ruby bridge listener, and the executor and adapter read the
+live SketchUp model. If you intentionally leave something selected, a non-empty
+`entities` array is also a successful full-path result.
+
+## Public tools
 
 <!-- command-catalog:start -->
 * `create_component` - Create a grouped primitive in the active SketchUp model.
@@ -108,45 +207,51 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 * `eval_ruby` - Evaluate trusted local Ruby source in SketchUp's top-level binding. Snippets must not manage SketchUp operations.
 <!-- command-catalog:end -->
 
-### Example Commands
-
-Here are some examples of what you can ask Claude to do:
-
-* "Create a simple house model with a roof and windows"
-* "Select all components and get their information"
-* "Make the selected component red"
-* "Move the selected component 10 units up"
-* "Export the current scene as a 3D model"
-* "Create a complex arts and crafts cabinet using Ruby code"
+The [command catalog](docs/command-catalog.md) defines the arguments, results,
+failure semantics, and compatibility aliases for this list.
 
 ## Troubleshooting
 
-* **Connection issues**: Make sure the SketchUp bridge and Python MCP server are running
-* **Command failures**: Check the Ruby Console in Sketchup for error messages
-* **Timeout errors**: Try simplifying your requests or breaking them into smaller steps
+| Symptom | Responsible role | Check and action |
+| --- | --- | --- |
+| The `sketchup` connector or tools are absent. | MCP host / MCP client | Validate the Claude Desktop JSON and absolute executable path, then completely restart the app. Check `mcp.log` and `mcp-server-sketchup.log` under `~/Library/Logs/Claude` on macOS or `%APPDATA%\Claude\logs` on Windows. |
+| The connector starts and immediately disconnects, with an import or executable error. | Python MCP server | Run the version-check command from step 4. If it fails, repeat `uv pip install --python .venv .` and make the configured `command` point to that environment. |
+| Tools are visible, but a call says `SketchUp bridge unavailable at 127.0.0.1:9876 after 3 attempts`. | bridge client | The stdio server is healthy but cannot reach the expected loopback port. In SketchUp choose **Start Bridge**, then check that both processes use the same port. |
+| **Start Bridge** reports that the port is in use, or no `Bridge listener:` line appears. | Ruby bridge listener | Read the SketchUp Ruby Console, stop the process already using the port, and start the bridge again. If the port must change, follow the shared-port rule below. |
+| The menu is absent, the displayed extension version is wrong, or `Extension runtime:` reports startup failure. | extension runtime | In Extension Manager enable version `1.6.1`, remove conflicting copies, completely quit SketchUp, reopen it, and inspect the Ruby Console. |
+| The bridge responds but a modeling command fails. | SketchUp runtime | Check the active model, selection, entity IDs, and SketchUp edition support. The Ruby Console separates `Command executor:` failures from SketchUp API errors; retry only after resolving that model-level cause. |
 
-## Technical Details
+Claude Desktop's official guide documents the
+[configuration paths, restart requirement, and MCP logs](https://modelcontextprotocol.io/docs/develop/connect-local-servers#troubleshooting).
 
-### Communication Protocol
+## Security
 
-The Python bridge client sends one newline-terminated JSON-RPC `tools/call`
-request per loopback connection to the Ruby bridge listener:
+The bridge binds only to `127.0.0.1`, which limits network access to the local
+machine but does not verify the connecting operating-system account. It has no
+application authentication or peer-credential check. Any local process or user
+able to connect to the port can invoke public commands while the bridge listener
+is running. Loopback also means this setup does not connect a remote MCP host,
+container, or virtual machine to SketchUp.
 
-```json
-{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_selection","arguments":{}},"id":17}
-```
+`eval_ruby` evaluates trusted local Ruby in SketchUp. It can alter the model and
+exercise the permissions of the SketchUp process. Review tool approvals and do
+not expose it to untrusted prompts, source, or users.
 
-A successful response preserves the request ID and carries a success envelope.
-Its text is the exact plain command result serialized as JSON; `resourceId` is
-present only for commands whose catalog contract declares one.
+Both processes read `SKETCHUP_MCP_BRIDGE_PORT`; the default is `9876`. If a port
+change is unavoidable, set the same value in the SketchUp process environment
+before starting SketchUp and in the Python MCP server's Claude Desktop
+configuration, for example with an `env` member containing
+`"SKETCHUP_MCP_BRIDGE_PORT": "19876"`. Changing only one side breaks the bridge.
+The fixed loopback host cannot be configured.
 
-```json
-{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"{\"entities\":[]}"}],"isError":false,"success":true},"id":17}
-```
+The connection lifecycle and trust decision are recorded in
+[ADR 0001](docs/adr/0001-local-one-request-bridge-lifecycle.md).
 
-## Contributing
+## Project documentation
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+- [Domain language](CONTEXT.md)
+- [Public command catalog](docs/command-catalog.md)
+- [Contributor workflow tracking issue](https://github.com/coral-garden/sketchup-mcp/issues/19)
 
 ## License
 
