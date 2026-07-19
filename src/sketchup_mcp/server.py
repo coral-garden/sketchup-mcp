@@ -1,10 +1,11 @@
 from mcp.server.fastmcp import FastMCP, Context
 import json
 import logging
-from contextlib import asynccontextmanager
-from typing import AsyncIterator, Dict, Any, List
+from contextlib import asynccontextmanager, contextmanager
+from typing import AsyncIterator, Dict, Any, Iterator, List
 
 from .bridge import BridgeClient
+from .mcp_server import CreateComponentTool
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -15,26 +16,41 @@ logger = logging.getLogger("SketchupMCPServer")
 __version__ = "0.1.17"
 logger.info(f"SketchupMCP Server version {__version__} starting up")
 
-# Global connection management
-_sketchup_connection = None
+# Lazily configured stateless bridge client.
+_bridge_client: BridgeClient | None = None
 
-def get_sketchup_connection():
+
+def get_bridge_client() -> BridgeClient:
     """Get the stateless client for one-request-per-connection exchanges."""
-    global _sketchup_connection
-    if _sketchup_connection is None:
-        _sketchup_connection = BridgeClient.from_environment()
-    return _sketchup_connection
+    global _bridge_client
+    if _bridge_client is None:
+        _bridge_client = BridgeClient.from_environment()
+    return _bridge_client
+
+
+@contextmanager
+def use_bridge_client(client: BridgeClient) -> Iterator[None]:
+    """Compose MCP tool handlers with a supplied bridge client for this scope."""
+
+    global _bridge_client
+    previous = _bridge_client
+    _bridge_client = client
+    try:
+        yield
+    finally:
+        _bridge_client = previous
+
 
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
     """Manage server startup and shutdown lifecycle"""
     try:
         logger.info("SketchupMCP server starting up")
-        get_sketchup_connection()
+        get_bridge_client()
         yield {}
     finally:
-        global _sketchup_connection
-        _sketchup_connection = None
+        global _bridge_client
+        _bridge_client = None
         logger.info("SketchupMCP server shut down")
 
 # Create MCP server with lifespan support
@@ -53,33 +69,12 @@ def create_component(
     dimensions: List[float] = None
 ) -> str:
     """Create a new component in Sketchup"""
-    try:
-        logger.info(f"create_component called with type={type}, position={position}, dimensions={dimensions}, request_id={ctx.request_id}")
-        
-        sketchup = get_sketchup_connection()
-        
-        params = {
-            "name": "create_component",
-            "arguments": {
-                "type": type,
-                "position": position or [0,0,0],
-                "dimensions": dimensions or [1,1,1]
-            }
-        }
-        
-        logger.info(f"Calling send_command with method='tools/call', params={params}, request_id={ctx.request_id}")
-        
-        result = sketchup.send_command(
-            method="tools/call",
-            params=params,
-            request_id=ctx.request_id
-        )
-        
-        logger.info(f"create_component result: {result}")
-        return json.dumps(result)
-    except Exception as e:
-        logger.error(f"Error in create_component: {str(e)}")
-        return f"Error creating component: {str(e)}"
+    return CreateComponentTool(get_bridge_client()).create_component(
+        request_id=ctx.request_id,
+        component_type=type,
+        position=position,
+        dimensions=dimensions,
+    )
 
 @mcp.tool()
 def delete_component(
@@ -88,7 +83,7 @@ def delete_component(
 ) -> str:
     """Delete a component by ID"""
     try:
-        sketchup = get_sketchup_connection()
+        sketchup = get_bridge_client()
         result = sketchup.send_command(
             method="tools/call",
             params={
@@ -111,7 +106,7 @@ def transform_component(
 ) -> str:
     """Transform a component's position, rotation, or scale"""
     try:
-        sketchup = get_sketchup_connection()
+        sketchup = get_bridge_client()
         arguments = {"id": id}
         if position is not None:
             arguments["position"] = position
@@ -136,7 +131,7 @@ def transform_component(
 def get_selection(ctx: Context) -> str:
     """Get currently selected components"""
     try:
-        sketchup = get_sketchup_connection()
+        sketchup = get_bridge_client()
         result = sketchup.send_command(
             method="tools/call",
             params={
@@ -157,7 +152,7 @@ def set_material(
 ) -> str:
     """Set material for a component"""
     try:
-        sketchup = get_sketchup_connection()
+        sketchup = get_bridge_client()
         result = sketchup.send_command(
             method="tools/call",
             params={
@@ -180,11 +175,11 @@ def export_scene(
 ) -> str:
     """Export the current scene"""
     try:
-        sketchup = get_sketchup_connection()
+        sketchup = get_bridge_client()
         result = sketchup.send_command(
             method="tools/call",
             params={
-                "name": "export",
+                "name": "export_scene",
                 "arguments": {
                     "format": format
                 }
@@ -211,7 +206,7 @@ def create_mortise_tenon(
     try:
         logger.info(f"create_mortise_tenon called with mortise_id={mortise_id}, tenon_id={tenon_id}, width={width}, height={height}, depth={depth}, offsets=({offset_x}, {offset_y}, {offset_z})")
         
-        sketchup = get_sketchup_connection()
+        sketchup = get_bridge_client()
         
         result = sketchup.send_command(
             method="tools/call",
@@ -255,7 +250,7 @@ def create_dovetail(
     try:
         logger.info(f"create_dovetail called with tail_id={tail_id}, pin_id={pin_id}, width={width}, height={height}, depth={depth}, angle={angle}, num_tails={num_tails}")
         
-        sketchup = get_sketchup_connection()
+        sketchup = get_bridge_client()
         
         result = sketchup.send_command(
             method="tools/call",
@@ -300,7 +295,7 @@ def create_finger_joint(
     try:
         logger.info(f"create_finger_joint called with board1_id={board1_id}, board2_id={board2_id}, width={width}, height={height}, depth={depth}, num_fingers={num_fingers}")
         
-        sketchup = get_sketchup_connection()
+        sketchup = get_bridge_client()
         
         result = sketchup.send_command(
             method="tools/call",
@@ -336,7 +331,7 @@ def eval_ruby(
     try:
         logger.info(f"eval_ruby called with code length: {len(code)}")
         
-        sketchup = get_sketchup_connection()
+        sketchup = get_bridge_client()
         
         result = sketchup.send_command(
             method="tools/call",

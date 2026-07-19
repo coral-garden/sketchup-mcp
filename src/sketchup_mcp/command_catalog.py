@@ -132,6 +132,3 @@ def load_command_catalog() -> CommandCatalog:
         success_envelope=_freeze(raw["success_envelope"]),
         failure_semantics=_freeze(raw["failure_semantics"]),
     )
-
-
-COMMAND_CATALOG = load_command_catalog()

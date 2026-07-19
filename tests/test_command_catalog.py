@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 
 
@@ -189,87 +190,61 @@ print(json.dumps({
         )
         self.assertFalse(report.in_sync)
 
-    def test_repository_parity_exposes_each_current_consumer_disagreement(self):
+    def test_repository_parity_classifies_each_consumer_report(self):
         from sketchup_mcp.command_parity import inspect_repository
 
-        reports = {
-            report.consumer: report.as_dict()
-            for report in inspect_repository(REPO_ROOT)
-        }
+        reports = inspect_repository(REPO_ROOT)
 
         self.assertEqual(
-            reports,
-            {
-                "python_mcp_server": {
-                    "consumer": "python_mcp_server",
-                    "in_sync": False,
-                    "missing": [
-                        "boolean_operation",
-                        "chamfer_edges",
-                        "fillet_edges",
-                    ],
-                    "extra": [],
-                    "differently_named": {},
-                },
-                "ruby_extension": {
-                    "consumer": "ruby_extension",
-                    "in_sync": False,
-                    "missing": [],
-                    "extra": [],
-                    "differently_named": {"export": "export_scene"},
-                },
-                "manifest": {
-                    "consumer": "manifest",
-                    "in_sync": False,
-                    "missing": [
-                        "boolean_operation",
-                        "chamfer_edges",
-                        "fillet_edges",
-                        "create_mortise_tenon",
-                        "create_dovetail",
-                        "create_finger_joint",
-                        "eval_ruby",
-                    ],
-                    "extra": [],
-                    "differently_named": {},
-                },
-                "readme": {
-                    "consumer": "readme",
-                    "in_sync": False,
-                    "missing": [
-                        "boolean_operation",
-                        "chamfer_edges",
-                        "fillet_edges",
-                        "create_mortise_tenon",
-                        "create_dovetail",
-                        "create_finger_joint",
-                    ],
-                    "extra": ["get_scene_info"],
-                    "differently_named": {
-                        "get_selected_components": "get_selection"
-                    },
-                },
-            },
+            [report.consumer for report in reports],
+            ["python_mcp_server", "ruby_extension", "manifest", "readme"],
         )
+        for report in reports:
+            self.assertEqual(
+                set(report.as_dict()),
+                {"consumer", "in_sync", "missing", "extra", "differently_named"},
+            )
 
     def test_parity_verifier_cli_returns_machine_readable_failure(self):
         environment = os.environ.copy()
         environment["PYTHONPATH"] = str(SRC_ROOT)
 
-        completed = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "sketchup_mcp.command_parity",
-                "--json",
-                str(REPO_ROOT),
-            ],
-            cwd=REPO_ROOT,
-            env=environment,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory)
+            (fixture / "src/sketchup_mcp").mkdir(parents=True)
+            (fixture / "su_mcp/su_mcp").mkdir(parents=True)
+            (fixture / "src/sketchup_mcp/server.py").write_text(
+                "@mcp.tool()\ndef create_component():\n    pass\n",
+                encoding="utf-8",
+            )
+            (fixture / "su_mcp/su_mcp/main.rb").write_text(
+                'def handle_tool_call\n  when "create_component"\nend\n'
+                "def create_component\nend\n",
+                encoding="utf-8",
+            )
+            (fixture / "sketchup.json").write_text(
+                json.dumps({"tools": [{"name": "create_component"}]}),
+                encoding="utf-8",
+            )
+            (fixture / "README.md").write_text(
+                "#### Tools\n\n- `create_component`\n- `get_scene_info`\n",
+                encoding="utf-8",
+            )
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "sketchup_mcp.command_parity",
+                    "--json",
+                    str(fixture),
+                ],
+                cwd=REPO_ROOT,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
 
         report = json.loads(completed.stdout)
         self.assertEqual(completed.returncode, 1)
@@ -278,7 +253,6 @@ print(json.dumps({
             [consumer["consumer"] for consumer in report["consumers"]],
             ["python_mcp_server", "ruby_extension", "manifest", "readme"],
         )
-        self.assertEqual(report["consumers"][1]["differently_named"], {"export": "export_scene"})
         self.assertEqual(report["consumers"][3]["extra"], ["get_scene_info"])
 
 

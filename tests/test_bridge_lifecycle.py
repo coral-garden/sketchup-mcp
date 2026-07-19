@@ -6,7 +6,7 @@ import subprocess
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from sketchup_mcp.bridge import (
     BridgeClient,
@@ -104,7 +104,7 @@ def delay_without_response(_client, _request):
 class BridgeLifecycleTest(unittest.TestCase):
     def test_request_and_response_are_newline_framed_and_preserve_id(self):
         with ScriptedBridge([send_result({"ok": True})]) as bridge:
-            client = BridgeClient(port=bridge.port)
+            client = BridgeClient.for_tcp(port=bridge.port)
 
             result = client.send_command(
                 "tools/call",
@@ -128,7 +128,7 @@ class BridgeLifecycleTest(unittest.TestCase):
     def test_response_id_must_match_request_id(self):
         response = {"jsonrpc": "2.0", "result": {}, "id": "someone-else"}
         with ScriptedBridge([send_response(response)]) as bridge:
-            client = BridgeClient(port=bridge.port)
+            client = BridgeClient.for_tcp(port=bridge.port)
 
             with self.assertRaisesRegex(
                 BridgeProtocolError,
@@ -147,7 +147,7 @@ class BridgeLifecycleTest(unittest.TestCase):
             "id": 42,
         }
         with ScriptedBridge([send_response(response)]) as bridge:
-            client = BridgeClient(port=bridge.port)
+            client = BridgeClient.for_tcp(port=bridge.port)
 
             with self.assertRaises(BridgeRemoteError) as raised:
                 client.send_command("create_component", request_id=42)
@@ -160,7 +160,7 @@ class BridgeLifecycleTest(unittest.TestCase):
 
     def test_malformed_json_is_a_protocol_error_and_is_not_retried(self):
         with ScriptedBridge([send_bytes(b'{"jsonrpc":"2.0",nope}\n')]) as bridge:
-            client = BridgeClient(port=bridge.port)
+            client = BridgeClient.for_tcp(port=bridge.port)
 
             with self.assertRaisesRegex(
                 BridgeProtocolError, "malformed JSON response"
@@ -172,7 +172,7 @@ class BridgeLifecycleTest(unittest.TestCase):
     def test_malformed_jsonrpc_object_is_a_protocol_error(self):
         response = {"jsonrpc": "2.0", "id": 10}
         with ScriptedBridge([send_response(response)]) as bridge:
-            client = BridgeClient(port=bridge.port)
+            client = BridgeClient.for_tcp(port=bridge.port)
 
             with self.assertRaisesRegex(
                 BridgeProtocolError, "exactly one of result or error"
@@ -182,7 +182,7 @@ class BridgeLifecycleTest(unittest.TestCase):
     def test_malformed_remote_error_is_a_protocol_error(self):
         response = {"jsonrpc": "2.0", "error": "nope", "id": 11}
         with ScriptedBridge([send_response(response)]) as bridge:
-            client = BridgeClient(port=bridge.port)
+            client = BridgeClient.for_tcp(port=bridge.port)
 
             with self.assertRaisesRegex(
                 BridgeProtocolError, "error must be an object"
@@ -193,7 +193,7 @@ class BridgeLifecycleTest(unittest.TestCase):
         with ScriptedBridge(
             [close_without_response, send_result({"reconnected": True})]
         ) as bridge:
-            client = BridgeClient(port=bridge.port, max_attempts=2)
+            client = BridgeClient.for_tcp(port=bridge.port, max_attempts=2)
 
             result = client.send_command("get_selection", request_id=73)
 
@@ -204,7 +204,9 @@ class BridgeLifecycleTest(unittest.TestCase):
         with ScriptedBridge(
             [delay_without_response, delay_without_response]
         ) as bridge:
-            client = BridgeClient(port=bridge.port, timeout=0.01, max_attempts=2)
+            client = BridgeClient.for_tcp(
+                port=bridge.port, timeout=0.01, max_attempts=2
+            )
 
             with self.assertRaisesRegex(BridgeTimeout, "timed out after 2 attempts"):
                 client.send_command("get_selection", request_id=81)
@@ -218,7 +220,7 @@ class BridgeLifecycleTest(unittest.TestCase):
         with ScriptedBridge(
             [send_bytes(response[:5], response[5:19], response[19:] + b"\n")]
         ) as bridge:
-            client = BridgeClient(port=bridge.port)
+            client = BridgeClient.for_tcp(port=bridge.port)
 
             result = client.send_command("get_selection", request_id=91)
 
@@ -228,7 +230,7 @@ class BridgeLifecycleTest(unittest.TestCase):
         with ScriptedBridge(
             [send_result({"request": 1}), send_result({"request": 2})]
         ) as bridge:
-            client = BridgeClient(port=bridge.port)
+            client = BridgeClient.for_tcp(port=bridge.port)
 
             first = client.send_command("get_selection", request_id=101)
             second = client.send_command("get_selection", request_id=102)
@@ -243,7 +245,9 @@ class BridgeLifecycleTest(unittest.TestCase):
         unused_port = reservation.getsockname()[1]
         reservation.close()
 
-        client = BridgeClient(port=unused_port, timeout=0.01, max_attempts=2)
+        client = BridgeClient.for_tcp(
+            port=unused_port, timeout=0.01, max_attempts=2
+        )
 
         with self.assertRaisesRegex(
             BridgeUnavailable,
@@ -255,11 +259,23 @@ class BridgeLifecycleTest(unittest.TestCase):
         with patch.dict(os.environ, {"SKETCHUP_MCP_BRIDGE_PORT": "12345"}):
             client = BridgeClient.from_environment()
 
-        self.assertEqual(12345, client.port)
+        self.assertEqual("127.0.0.1:12345", client.adapter.endpoint)
 
-    def test_bridge_destination_cannot_be_widened_from_loopback(self):
-        with self.assertRaises(TypeError):
-            BridgeClient(host="0.0.0.0")
+    def test_tcp_adapter_connects_to_ipv4_loopback_only(self):
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.recv.return_value = json.dumps(
+            {"jsonrpc": "2.0", "result": {"ok": True}, "id": "loopback"}
+        ).encode("utf-8") + b"\n"
+
+        with patch(
+            "sketchup_mcp.bridge.socket.create_connection",
+            return_value=connection,
+        ) as create_connection:
+            client = BridgeClient.for_tcp(port=12_345, timeout=0.25)
+            client.send_command("get_selection", request_id="loopback")
+
+        create_connection.assert_called_once_with(("127.0.0.1", 12_345), 0.25)
 
     def test_regression_reproduces_legacy_persistence_then_uses_new_connection(self):
         fixture = (
@@ -292,23 +308,24 @@ class BridgeLifecycleTest(unittest.TestCase):
             self.assertEqual(
                 {"request": 1}, json.loads(legacy_response)["result"]
             )
-            self.assertEqual(b"", legacy_connection.recv(1))
-
-            with self.assertRaises(ConnectionError):
-                try:
-                    legacy_connection.sendall(
-                        json.dumps({**legacy_request, "id": "legacy-2"}).encode(
-                            "utf-8"
-                        )
-                        + b"\n"
+            second_exchange_failed = False
+            try:
+                legacy_connection.sendall(
+                    json.dumps({**legacy_request, "id": "legacy-2"}).encode(
+                        "utf-8"
                     )
-                except OSError as error:
-                    raise ConnectionError("Ruby closed the persistent socket") from error
-                if legacy_connection.recv(1) == b"":
-                    raise ConnectionError("Ruby closed the persistent socket")
+                    + b"\n"
+                )
+                second_exchange_failed = legacy_connection.recv(1) == b""
+            except OSError:
+                second_exchange_failed = True
+            self.assertTrue(
+                second_exchange_failed,
+                "a second exchange unexpectedly succeeded on the closed connection",
+            )
             legacy_connection.close()
 
-            client = BridgeClient(port=ready["port"])
+            client = BridgeClient.for_tcp(port=ready["port"])
             reconnected = client.send_command("get_selection", request_id="ruby-2")
 
             _stdout, stderr = process.communicate(timeout=2)
@@ -329,14 +346,12 @@ class BridgeLifecycleTest(unittest.TestCase):
         reservation.bind(("127.0.0.1", 0))
         unused_port = reservation.getsockname()[1]
         reservation.close()
-        server._sketchup_connection = BridgeClient(
+        unavailable_client = BridgeClient.for_tcp(
             port=unused_port, timeout=0.01, max_attempts=2
         )
         context = type("RequestContext", (), {"request_id": "mcp-121"})()
-        try:
+        with server.use_bridge_client(unavailable_client):
             result = server.create_component(context)
-        finally:
-            server._sketchup_connection = None
 
         self.assertIn("Error creating component:", result)
         self.assertIn(

@@ -1,0 +1,52 @@
+{
+  "defaults": {
+    "type": "cube",
+    "position": [0, 0, 0],
+    "dimensions": [1, 1, 1]
+  },
+  "success_result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"id\":321}"
+      }
+    ],
+    "isError": false,
+    "success": true,
+    "resourceId": 321
+  },
+  "success_ids": [17, "mcp-create-17", null],
+  "invalid_type": {
+    "request_id": "invalid-component",
+    "arguments": {
+      "type": "torus",
+      "position": [0, 0, 0],
+      "dimensions": [1, 1, 1]
+    },
+    "error": {
+      "code": -32602,
+      "message": "Unknown component type: torus",
+      "data": {
+        "success": false
+      }
+    }
+  },
+  "execution_error": {
+    "request_id": "component-failed",
+    "error": {
+      "code": -32603,
+      "message": "SketchUp could not create component",
+      "data": {
+        "success": false
+      }
+    }
+  },
+  "mismatched_id": {
+    "request_id": "expected-component",
+    "response_id": "different-component"
+  },
+  "unavailable": {
+    "request_id": "offline-component",
+    "attempts": 3
+  }
+}

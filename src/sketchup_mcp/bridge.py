@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import socket
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Callable, Protocol
+
+from .command_catalog import CommandCatalog, load_command_catalog
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -36,18 +38,117 @@ class BridgeTimeout(TimeoutError):
     """The bridge did not respond within its retry limit."""
 
 
+class BridgeAdapter(Protocol):
+    """Perform one exchange with the SketchUp extension."""
+
+    @property
+    def endpoint(self) -> str:
+        """Describe the destination for user-facing transport errors."""
+
+    def exchange(self, request_payload: bytes, timeout: float) -> bytes:
+        """Return the payload from one complete response."""
+
+
 @dataclass(frozen=True)
-class BridgeClient:
-    """Send one JSON-RPC request over each TCP connection."""
+class TCPBridgeAdapter:
+    """Open one loopback TCP connection for each bridge exchange."""
 
     port: int = DEFAULT_PORT
+
+    @property
+    def endpoint(self) -> str:
+        return f"{DEFAULT_HOST}:{self.port}"
+
+    def exchange(self, request_payload: bytes, timeout: float) -> bytes:
+        with socket.create_connection((DEFAULT_HOST, self.port), timeout) as connection:
+            connection.settimeout(timeout)
+            connection.sendall(request_payload + b"\n")
+            return self._read_frame(connection)
+
+    @staticmethod
+    def _read_frame(connection) -> bytes:
+        frame = bytearray()
+        while not frame.endswith(b"\n"):
+            chunk = connection.recv(8192)
+            if not chunk:
+                raise ConnectionError(
+                    "bridge closed before completing a response frame"
+                )
+            frame.extend(chunk)
+        return bytes(frame[:-1])
+
+
+class InMemoryBridgeAdapter:
+    """Exercise the bridge exchange seam without opening a TCP connection."""
+
+    def __init__(
+        self,
+        handler: Callable[[dict[str, Any]], dict[str, Any]],
+        endpoint: str = f"{DEFAULT_HOST}:{DEFAULT_PORT}",
+    ):
+        self._handler = handler
+        self._endpoint = endpoint
+        self.requests: list[dict[str, Any]] = []
+
+    @property
+    def endpoint(self) -> str:
+        return self._endpoint
+
+    @classmethod
+    def returning(cls, result: Any) -> "InMemoryBridgeAdapter":
+        """Create an adapter that returns the same successful result for each request."""
+
+        return cls(
+            lambda request: {
+                "jsonrpc": "2.0",
+                "result": result,
+                "id": request["id"],
+            }
+        )
+
+    def exchange(self, request_payload: bytes, timeout: float) -> bytes:
+        del timeout
+        request = json.loads(request_payload.decode("utf-8"))
+        self.requests.append(request)
+        response = self._handler(request)
+        return json.dumps(response).encode("utf-8")
+
+
+@dataclass(frozen=True)
+class BridgeClient:
+    """Validate and retry one JSON-RPC command exchange at a time."""
+
+    adapter: BridgeAdapter = field(repr=False)
     timeout: float = 15.0
     max_attempts: int = 3
+    catalog: CommandCatalog = field(
+        default_factory=load_command_catalog,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    @classmethod
+    def for_tcp(
+        cls,
+        port: int = DEFAULT_PORT,
+        timeout: float = 15.0,
+        max_attempts: int = 3,
+    ) -> "BridgeClient":
+        """Build a client backed by the production loopback TCP adapter."""
+
+        return cls(
+            adapter=TCPBridgeAdapter(port),
+            timeout=timeout,
+            max_attempts=max_attempts,
+        )
 
     @classmethod
     def from_environment(cls) -> "BridgeClient":
         """Build the loopback client using the shared port setting."""
-        return cls(port=int(os.environ.get("SKETCHUP_MCP_BRIDGE_PORT", DEFAULT_PORT)))
+        return cls.for_tcp(
+            port=int(os.environ.get("SKETCHUP_MCP_BRIDGE_PORT", DEFAULT_PORT))
+        )
 
     def send_command(
         self,
@@ -56,16 +157,20 @@ class BridgeClient:
         request_id: Any = None,
     ) -> Any:
         request = self._request(method, params, request_id)
+        command_name = request["params"]["name"]
+        try:
+            self.catalog.command(command_name)
+        except KeyError as error:
+            raise ValueError(
+                f"Unknown SketchUp command in command catalog: {command_name}"
+            ) from error
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
+        request_payload = json.dumps(request).encode("utf-8")
+        adapter = self.adapter
         for attempt in range(1, self.max_attempts + 1):
             try:
-                with socket.create_connection(
-                    (DEFAULT_HOST, self.port), self.timeout
-                ) as connection:
-                    connection.settimeout(self.timeout)
-                    connection.sendall(json.dumps(request).encode("utf-8") + b"\n")
-                    response_frame = self._read_frame(connection)
+                response_payload = adapter.exchange(request_payload, self.timeout)
                 break
             except socket.timeout as error:
                 if attempt == self.max_attempts:
@@ -75,17 +180,19 @@ class BridgeClient:
             except OSError as error:
                 if attempt == self.max_attempts:
                     raise BridgeUnavailable(
-                        f"SketchUp bridge unavailable at {DEFAULT_HOST}:{self.port} "
+                        f"SketchUp bridge unavailable at {adapter.endpoint} "
                         f"after {attempt} attempts: {error}"
                     ) from error
         try:
-            response = json.loads(response_frame.decode("utf-8"))
+            response = json.loads(response_payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise BridgeProtocolError(f"malformed JSON response: {error}") from error
         if not isinstance(response, dict):
             raise BridgeProtocolError("JSON-RPC response must be an object")
         if response.get("jsonrpc") != "2.0":
             raise BridgeProtocolError("JSON-RPC response version must be '2.0'")
+        if "id" not in response:
+            raise BridgeProtocolError("JSON-RPC response must contain an id")
         if response.get("id") != request_id:
             raise BridgeProtocolError(
                 f"response id {response.get('id')!r} does not match "
@@ -117,6 +224,12 @@ class BridgeClient:
 
     @staticmethod
     def _request(method, params, request_id):
+        """Normalize direct commands and legacy pre-wrapped tool calls.
+
+        Both forms remain supported until issue #11 migrates the remaining MCP
+        handlers to the focused command interface.
+        """
+
         if method == "tools/call" and params and {"name", "arguments"} <= params.keys():
             return {
                 "jsonrpc": "2.0",
@@ -130,13 +243,3 @@ class BridgeClient:
             "params": {"name": method, "arguments": params or {}},
             "id": request_id,
         }
-
-    @staticmethod
-    def _read_frame(connection):
-        frame = bytearray()
-        while not frame.endswith(b"\n"):
-            chunk = connection.recv(8192)
-            if not chunk:
-                raise ConnectionError("bridge closed before completing a response frame")
-            frame.extend(chunk)
-        return bytes(frame[:-1])
