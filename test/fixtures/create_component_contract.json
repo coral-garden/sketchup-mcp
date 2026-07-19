@@ -25,7 +25,7 @@
     },
     "error": {
       "code": -32602,
-      "message": "Unknown component type: torus",
+      "message": "type must be one of: cube, cylinder, sphere, cone",
       "data": {
         "success": false
       }

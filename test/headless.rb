@@ -1,3 +1,5 @@
+require 'rbconfig'
+
 module HeadlessTest
   module Assertions
     def assert_equal(expected, actual)
@@ -64,4 +66,18 @@ module HeadlessTest
     puts "#{tests.length} tests, #{failures.length} failures"
     exit(failures.empty? ? 0 : 1)
   end
+
+  # Each test file ends in a HeadlessTest.run call that exits, so the suite runs
+  # one file per process rather than loading them all into this one.
+  def self.run_suite
+    files = Dir[File.join(__dir__, '*_test.rb')].sort
+    abort 'No test files found' if files.empty?
+
+    failed = files.reject { |file| system(RbConfig.ruby, file) }
+    failed.each { |file| warn "FAILED: #{File.basename(file)}" }
+    puts "#{files.length} test files, #{failed.length} failed"
+    exit(failed.empty? ? 0 : 1)
+  end
 end
+
+HeadlessTest.run_suite if __FILE__ == $PROGRAM_NAME
