@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "commands": [
+    "create_component",
+    "delete_component",
+    "transform_component",
+    "get_selection",
+    "set_material",
+    "export_scene",
+    "boolean_operation",
+    "create_mortise_tenon",
+    "create_dovetail",
+    "create_finger_joint",
+    "eval_ruby"
+  ],
+  "scenarios": [
+    "abort_failure_retries_operation_cleanup",
+    "boolean_geometry",
+    "catalog_parity",
+    "command_results_accept_string_success_and_reject_failure",
+    "create_component_geometry",
+    "default_model_resolution",
+    "delete_component_and_undo",
+    "dovetail_geometry",
+    "eval_ruby_rejects_operation_control",
+    "eval_ruby_success_and_normalization",
+    "export_failure_cleanup",
+    "export_success_cleanup",
+    "failure_aborts_model_changes",
+    "finger_joint_geometry",
+    "invalid_material_and_boolean_preflight",
+    "joinery_preflight_rejects_invalid_entities",
+    "mortise_tenon_geometry",
+    "operation_start_failure_does_not_abort",
+    "selection_and_resources",
+    "set_material",
+    "transform_component_geometry",
+    "zz_write_runtime_report"
+  ]
+}

@@ -80,6 +80,14 @@ _Avoid_: server, handler, dispatcher
 The role that translates command-executor calls into operations against the SketchUp runtime.
 _Avoid_: bridge listener, SketchUp wrapper
 
+**SketchUp runtime evidence**:
+The integrity-checked raw-artifact record that a specific extension package and
+command catalog passed the production-adapter contract on a designated
+Windows/macOS runner, together with the operator's manual licensed-runner and
+single-TestUp-process attestations. Hashes protect the retained files from
+undetected changes; they do not prove process provenance.
+_Avoid_: headless proof, generic CI result
+
 ---
 
 Bridge lifecycle, framing, retry, port, and trust-boundary decisions live in
