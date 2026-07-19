@@ -155,7 +155,7 @@ class SceneGeometryCompositionTest
       commands = SU_MCP::SketchupCommands.new(model: model)
       adapter = SU_MCP::SketchupAdapter.new(commands: commands, model: model)
       dispatcher = SU_MCP::CommandDispatcher.new(
-        executor: SU_MCP::CommandExecutor.new(sketchup: adapter)
+        executor: SU_MCP::CommandExecutor.new(adapter: adapter)
       )
 
       response = dispatcher.call(

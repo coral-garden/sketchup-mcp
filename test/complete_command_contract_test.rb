@@ -31,7 +31,7 @@ class CompleteCommandContractTest
     results = commands.to_h { |command| [command.fetch('name'), command.fetch('command_result')] }
     adapter = CompleteContractAdapter.new(results)
     dispatcher = SU_MCP::CommandDispatcher.new(
-      executor: SU_MCP::CommandExecutor.new(sketchup: adapter, catalog: catalog),
+      executor: SU_MCP::CommandExecutor.new(adapter: adapter, catalog: catalog),
       catalog: catalog
     )
 

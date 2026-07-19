@@ -52,7 +52,7 @@ module SU_MCP
       @logger = logger || ->(_message) {}
       @io_timeout = io_timeout
       @transport = transport
-      @server = nil
+      @listening_socket = nil
       @ready = Queue.new
       @clients = []
       @workers = []
@@ -62,19 +62,19 @@ module SU_MCP
     def start
       return self if running?
 
-      @server = @transport.listen(HOST, @port)
-      @port = @server.local_address.ip_port
-      @logger.call("Bridge listening on #{HOST}:#{@port}")
+      @listening_socket = @transport.listen(HOST, @port)
+      @port = @listening_socket.local_address.ip_port
+      @logger.call("Bridge listener: listening on #{HOST}:#{@port}")
       self
     rescue Errno::EADDRINUSE => error
-      @server = nil
+      @listening_socket = nil
       raise PortInUseError,
-            "SketchUp bridge cannot bind #{HOST}:#{@port}; port is already in use: #{error.message}"
+            "Bridge listener cannot bind #{HOST}:#{@port}; port is already in use: #{error.message}"
     end
 
     def stop
-      @server&.close
-      @server = nil
+      @listening_socket&.close
+      @listening_socket = nil
 
       clients, workers = @connections_lock.synchronize do
         [@clients.dup, @workers.dup]
@@ -91,20 +91,20 @@ module SU_MCP
     end
 
     def running?
-      !@server.nil? && !@server.closed?
+      !@listening_socket.nil? && !@listening_socket.closed?
     end
 
     def address
       raise IOError, 'bridge listener is not running' unless running?
 
-      @server.local_address
+      @listening_socket.local_address
     end
 
     def poll(timeout: 0)
       raise IOError, 'bridge listener is not running' unless running?
-      return false unless @transport.wait(@server, :read, timeout)
+      return false unless @transport.wait(@listening_socket, :read, timeout)
 
-      client = @server.accept_nonblock
+      client = @listening_socket.accept_nonblock
       @connections_lock.synchronize do
         @clients << client
         @workers << Thread.new { serve(client) }
@@ -138,12 +138,12 @@ module SU_MCP
       @ready << WorkItem.new(request: request, response_queue: response_queue)
       write_frame(client, response_queue.pop)
     rescue JSON::ParserError, IncompleteFrameError => error
-      enqueue_log("Bridge parse error: #{error.message}")
+      enqueue_log('Bridge listener: rejected malformed JSON')
       write_parse_error(client)
     rescue IOTimeoutError => error
-      enqueue_log("Bridge I/O error: #{error.message}")
+      enqueue_log("Bridge listener: I/O error: #{error.message}")
     rescue StandardError => error
-      enqueue_log("Bridge I/O error: #{error.message}")
+      enqueue_log("Bridge listener: I/O error: #{error.message}")
     ensure
       close(client)
       @connections_lock.synchronize do
@@ -155,7 +155,7 @@ module SU_MCP
     def handle(request)
       @handler.call(request)
     rescue StandardError => error
-      @logger.call("Bridge request error: #{error.message}")
+      @logger.call('Bridge listener: command dispatch failed')
       {
         jsonrpc: '2.0',
         error: { code: -32_603, message: error.message },
@@ -203,7 +203,7 @@ module SU_MCP
         jsonrpc: '2.0', error: { code: -32_700, message: 'Parse error' }, id: nil
       )
     rescue StandardError => error
-      enqueue_log("Bridge I/O error: #{error.message}")
+      enqueue_log("Bridge listener: I/O error: #{error.message}")
     end
 
     def wait_until_ready(client, direction, deadline)

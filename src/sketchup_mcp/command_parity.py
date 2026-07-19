@@ -69,7 +69,7 @@ def _python_mcp_commands(root: Path) -> set[str]:
     script = """
 import asyncio
 import json
-from sketchup_mcp.server import mcp
+from sketchup_mcp.mcp_server import mcp
 print(json.dumps([tool.name for tool in asyncio.run(mcp.list_tools())]))
 """
     environment = os.environ.copy()

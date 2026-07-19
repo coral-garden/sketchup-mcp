@@ -5,21 +5,28 @@ module SU_MCP
   class CommandExecutor
     Execution = Struct.new(:command, :result, keyword_init: true)
 
-    def initialize(sketchup:, catalog: CommandCatalog.new)
-      @sketchup = sketchup
+    def initialize(adapter:, catalog: CommandCatalog.new, logger: nil)
+      @adapter = adapter
       @catalog = catalog
+      @logger = logger || ->(_message) {}
     end
 
     def call(name, arguments)
       command = @catalog.command(name)
       command_name = command.name
-      raise UnknownCommand, "Unknown command: #{name}" unless @sketchup.respond_to?(command_name)
+      @logger.call("Command executor: command started: #{command_name}")
+      raise UnknownCommand, "Unknown command: #{name}" unless @adapter.respond_to?(command_name)
 
       normalized = @catalog.validate(command, arguments)
-      Execution.new(
+      execution = Execution.new(
         command: command,
-        result: @sketchup.public_send(command_name, **keywords(normalized))
+        result: @adapter.public_send(command_name, **keywords(normalized))
       )
+      @logger.call("Command executor: command completed: #{command_name}")
+      execution
+    rescue StandardError, ScriptError => error
+      @logger.call("Command executor: command failed: #{name}: #{error.class}")
+      raise
     end
 
     private

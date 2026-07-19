@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 from dataclasses import dataclass, field
@@ -13,6 +14,7 @@ from .command_catalog import CommandCatalog, load_command_catalog
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9876
+logger = logging.getLogger("SketchUpMCP.BridgeClient")
 
 
 class BridgeProtocolError(Exception):
@@ -169,15 +171,40 @@ class BridgeClient:
         request_payload = json.dumps(request).encode("utf-8")
         adapter = self.adapter
         for attempt in range(1, self.max_attempts + 1):
+            logger.info(
+                "Bridge client exchange: command=%s request_id=%r attempt=%d endpoint=%s",
+                command_name,
+                request_id,
+                attempt,
+                adapter.endpoint,
+            )
             try:
                 response_payload = adapter.exchange(request_payload, self.timeout)
+                logger.info(
+                    "Bridge client response: command=%s request_id=%r attempt=%d",
+                    command_name,
+                    request_id,
+                    attempt,
+                )
                 break
             except socket.timeout as error:
+                logger.warning(
+                    "Bridge client timeout: command=%s request_id=%r attempt=%d",
+                    command_name,
+                    request_id,
+                    attempt,
+                )
                 if attempt == self.max_attempts:
                     raise BridgeTimeout(
                         f"SketchUp bridge timed out after {attempt} attempts"
                     ) from error
             except OSError as error:
+                logger.warning(
+                    "Bridge client unavailable: command=%s request_id=%r attempt=%d",
+                    command_name,
+                    request_id,
+                    attempt,
+                )
                 if attempt == self.max_attempts:
                     raise BridgeUnavailable(
                         f"SketchUp bridge unavailable at {adapter.endpoint} "

@@ -54,7 +54,7 @@ class CommandDispatcherTest
 
   def test_create_component_succeeds_through_the_controlled_sketchup_seam
     sketchup = ControlledSketchupAdapter.new(created_id: 731)
-    executor = SU_MCP::CommandExecutor.new(sketchup: sketchup)
+    executor = SU_MCP::CommandExecutor.new(adapter: sketchup)
     dispatcher = SU_MCP::CommandDispatcher.new(executor: executor)
 
     response = dispatcher.call(
@@ -93,7 +93,7 @@ class CommandDispatcherTest
   def test_create_component_uses_the_catalog_defaults
     sketchup = ControlledSketchupAdapter.new(created_id: 321)
     dispatcher = SU_MCP::CommandDispatcher.new(
-      executor: SU_MCP::CommandExecutor.new(sketchup: sketchup)
+      executor: SU_MCP::CommandExecutor.new(adapter: sketchup)
     )
 
     dispatcher.call(
@@ -123,7 +123,7 @@ class CommandDispatcherTest
 
   def test_invalid_create_component_arguments_return_invalid_params_without_mutating_sketchup
     sketchup = ControlledSketchupAdapter.new
-    executor = SU_MCP::CommandExecutor.new(sketchup: sketchup)
+    executor = SU_MCP::CommandExecutor.new(adapter: sketchup)
     dispatcher = SU_MCP::CommandDispatcher.new(executor: executor)
 
     response = dispatcher.call(
@@ -148,7 +148,7 @@ class CommandDispatcherTest
     sketchup = ControlledSketchupAdapter.new(
       failure: RuntimeError.new('active model is unavailable')
     )
-    executor = SU_MCP::CommandExecutor.new(sketchup: sketchup)
+    executor = SU_MCP::CommandExecutor.new(adapter: sketchup)
     dispatcher = SU_MCP::CommandDispatcher.new(executor: executor)
 
     response = dispatcher.call(
@@ -167,7 +167,7 @@ class CommandDispatcherTest
 
   def test_malformed_vector_returns_invalid_params_without_mutating_sketchup
     sketchup = ControlledSketchupAdapter.new
-    executor = SU_MCP::CommandExecutor.new(sketchup: sketchup)
+    executor = SU_MCP::CommandExecutor.new(adapter: sketchup)
     dispatcher = SU_MCP::CommandDispatcher.new(executor: executor)
 
     response = dispatcher.call(
@@ -188,7 +188,7 @@ class CommandDispatcherTest
   def test_non_object_arguments_are_rejected_before_any_command_execution
     sketchup = ControlledSketchupAdapter.new
     dispatcher = SU_MCP::CommandDispatcher.new(
-      executor: SU_MCP::CommandExecutor.new(sketchup: sketchup)
+      executor: SU_MCP::CommandExecutor.new(adapter: sketchup)
     )
 
     response = dispatcher.call(
@@ -206,7 +206,7 @@ class CommandDispatcherTest
   def test_existing_argumentless_commands_remain_callable_through_the_adapter
     sketchup = SU_MCP::SketchupAdapter.new(commands: ControlledSketchupCommands.new)
     dispatcher = SU_MCP::CommandDispatcher.new(
-      executor: SU_MCP::CommandExecutor.new(sketchup: sketchup)
+      executor: SU_MCP::CommandExecutor.new(adapter: sketchup)
     )
 
     response = dispatcher.call(
@@ -228,7 +228,7 @@ class CommandDispatcherTest
   def assert_request_id_preserved(request_id)
     sketchup = ControlledSketchupAdapter.new(created_id: 321)
     dispatcher = SU_MCP::CommandDispatcher.new(
-      executor: SU_MCP::CommandExecutor.new(sketchup: sketchup)
+      executor: SU_MCP::CommandExecutor.new(adapter: sketchup)
     )
     response = dispatcher.call(
       'jsonrpc' => '2.0',

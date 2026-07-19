@@ -1,4 +1,4 @@
-# SketchupMCP - Sketchup Model Context Protocol Integration
+# SketchUp MCP - SketchUp Model Context Protocol Integration
 
 SketchupMCP connects Sketchup to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Sketchup. This integration enables prompt-assisted 3D modeling, scene creation, and manipulation in Sketchup.
 
@@ -13,12 +13,30 @@ Big Shoutout to [Blender MCP](https://github.com/ahujasid/blender-mcp) for the i
 * **Selection handling**: Get and manipulate selected components
 * **Ruby code evaluation**: Execute arbitrary Ruby code directly in SketchUp for advanced operations
 
-## Components
+## Runtime Topology
 
-The system consists of two main components:
+The roles are deliberately distinct:
 
-1. **Sketchup Extension**: A Sketchup extension that creates a TCP server within Sketchup to receive and execute commands
-2. **MCP Server (`sketchup_mcp/server.py`)**: A Python server that implements the Model Context Protocol and connects to the Sketchup extension
+```text
+MCP host
+  -> MCP client
+  -> Python MCP server over stdio
+  -> Python bridge client over loopback TCP
+  -> Ruby bridge listener
+  -> command executor
+  -> SketchUp adapter
+  -> SketchUp runtime
+```
+
+The canonical Python MCP server module is `sketchup_mcp.mcp_server`. The legacy
+`sketchup_mcp.server:mcp` import remains an identity-preserving compatibility
+path. Both the `sketchup-mcp` command and `python -m sketchup_mcp` remain
+supported launch paths. The historical `python -m sketchup_mcp.server` launch
+also remains available for compatibility; new integrations should use the
+`sketchup-mcp` command or `python -m sketchup_mcp`. The installed SketchUp
+extension runs an `ExtensionRuntime`; it is not an MCP server. The legacy
+`su_mcp` loader/package names and `SU_MCP_SERVER` product identifier remain
+compatibility identifiers; issue #17 owns any packaging migration.
 
 ## Installation
 
@@ -37,9 +55,9 @@ We're using uv so you'll need to ```brew install uv```
 
 ### Starting the Connection
 
-1. In Sketchup, go to Extensions > SketchupMCP > Start Server
-2. The server will start on the default port (9876)
-3. Make sure the MCP server is running in your terminal
+1. In SketchUp, go to Extensions > SketchUp MCP > Start Bridge
+2. The Ruby bridge listener will start on the default port (9876)
+3. Make sure the Python MCP server is running in your terminal
 
 ### Using with Claude
 
@@ -89,7 +107,7 @@ Here are some examples of what you can ask Claude to do:
 
 ## Troubleshooting
 
-* **Connection issues**: Make sure both the Sketchup extension server and the MCP server are running
+* **Connection issues**: Make sure the SketchUp bridge and Python MCP server are running
 * **Command failures**: Check the Ruby Console in Sketchup for error messages
 * **Timeout errors**: Try simplifying your requests or breaking them into smaller steps
 
@@ -97,8 +115,8 @@ Here are some examples of what you can ask Claude to do:
 
 ### Communication Protocol
 
-The MCP server sends one newline-terminated JSON-RPC `tools/call` request per
-loopback bridge connection:
+The Python bridge client sends one newline-terminated JSON-RPC `tools/call`
+request per loopback connection to the Ruby bridge listener:
 
 ```json
 {"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_selection","arguments":{}},"id":17}

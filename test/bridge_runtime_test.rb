@@ -77,7 +77,7 @@ class BridgeRuntimeTest
     scheduler = ControlledScheduler.new
     sketchup = ThreadRecordingSketchup.new
     dispatcher = SU_MCP::CommandDispatcher.new(
-      executor: SU_MCP::CommandExecutor.new(sketchup: sketchup)
+      executor: SU_MCP::CommandExecutor.new(adapter: sketchup)
     )
     listener = SU_MCP::BridgeListener.new(
       port: 0,
@@ -135,7 +135,7 @@ class BridgeRuntimeTest
       failure: RuntimeError.new('active model is unavailable')
     )
     dispatcher = SU_MCP::CommandDispatcher.new(
-      executor: SU_MCP::CommandExecutor.new(sketchup: sketchup)
+      executor: SU_MCP::CommandExecutor.new(adapter: sketchup)
     )
     listener = SU_MCP::BridgeListener.new(
       port: 0,

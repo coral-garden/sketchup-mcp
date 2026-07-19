@@ -218,7 +218,7 @@ class SceneGeometryContractTest
 
   def dispatcher_for(sketchup)
     SU_MCP::CommandDispatcher.new(
-      executor: SU_MCP::CommandExecutor.new(sketchup: sketchup)
+      executor: SU_MCP::CommandExecutor.new(adapter: sketchup)
     )
   end
 

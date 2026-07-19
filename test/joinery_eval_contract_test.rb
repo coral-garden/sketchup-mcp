@@ -137,7 +137,7 @@ class JoineryEvalContractTest
 
   def dispatcher_for(adapter)
     SU_MCP::CommandDispatcher.new(
-      executor: SU_MCP::CommandExecutor.new(sketchup: adapter)
+      executor: SU_MCP::CommandExecutor.new(adapter: adapter)
     )
   end
 

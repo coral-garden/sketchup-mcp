@@ -33,7 +33,7 @@ module SU_MCP
       @listener.poll(timeout: 0)
       @listener.drain
     rescue StandardError => error
-      @logger.call("Timer error: #{error.message}")
+      @logger.call("Extension runtime: scheduler tick failed: #{error.class}")
     end
   end
 end

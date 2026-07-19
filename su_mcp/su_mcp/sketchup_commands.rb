@@ -10,8 +10,7 @@ module SU_MCP
   # SketchUp API implementation retained behind the adapter seam while issues
   # #10 and #11 migrate the remaining command families.
   class SketchupCommands
-    def initialize(logger: nil, model: nil, catalog: CommandCatalog.new)
-      @logger = logger || ->(_message) {}
+    def initialize(model: nil, catalog: CommandCatalog.new)
       @model = model
       @catalog = catalog
     end
@@ -34,203 +33,103 @@ module SU_MCP
 
     private
 
-    def log(message)
-      @logger.call(message)
-    end
-
     def create_component(params)
-      log "Creating component with params: #{params.inspect}"
       model = @model || Sketchup.active_model
-      log "Got active model: #{model.inspect}"
       entities = model.active_entities
-      log "Got active entities: #{entities.inspect}"
 
       pos = params["position"] || [0,0,0]
       dims = params["dimensions"] || [1,1,1]
 
       case params["type"]
       when "cube"
-        log "Creating cube at position #{pos.inspect} with dimensions #{dims.inspect}"
-
-        begin
-          group = entities.add_group
-          log "Created group: #{group.inspect}"
-
-          face = group.entities.add_face(
-            [pos[0], pos[1], pos[2]],
-            [pos[0] + dims[0], pos[1], pos[2]],
-            [pos[0] + dims[0], pos[1] + dims[1], pos[2]],
-            [pos[0], pos[1] + dims[1], pos[2]]
-          )
-          log "Created face: #{face.inspect}"
-
-          face.pushpull(dims[2])
-          log "Pushed/pulled face by #{dims[2]}"
-
-          result = {
-            id: group.entityID,
-            success: true
-          }
-          log "Returning result: #{result.inspect}"
-          result
-        rescue StandardError => e
-          log "Error in create_component: #{e.message}"
-          log e.backtrace.join("\n")
-          raise
-        end
+        group = entities.add_group
+        face = group.entities.add_face(
+          [pos[0], pos[1], pos[2]],
+          [pos[0] + dims[0], pos[1], pos[2]],
+          [pos[0] + dims[0], pos[1] + dims[1], pos[2]],
+          [pos[0], pos[1] + dims[1], pos[2]]
+        )
+        face.pushpull(dims[2])
+        { id: group.entityID, success: true }
       when "cylinder"
-        log "Creating cylinder at position #{pos.inspect} with dimensions #{dims.inspect}"
+        group = entities.add_group
+        radius = dims[0] / 2.0
+        height = dims[2]
+        center = [pos[0] + radius, pos[1] + radius, pos[2]]
+        num_segments = 24
+        circle_points = []
 
-        begin
-          # Create a group to contain the cylinder
-          group = entities.add_group
-
-          # Extract dimensions
-          radius = dims[0] / 2.0
-          height = dims[2]
-
-          # Create a circle at the base
-          center = [pos[0] + radius, pos[1] + radius, pos[2]]
-
-          # Create points for a circle
-          num_segments = 24  # Number of segments for the circle
-          circle_points = []
-
-          num_segments.times do |i|
-            angle = Math::PI * 2 * i / num_segments
-            x = center[0] + radius * Math.cos(angle)
-            y = center[1] + radius * Math.sin(angle)
-            z = center[2]
-            circle_points << [x, y, z]
-          end
-
-          # Create the circular face
-          face = group.entities.add_face(circle_points)
-
-          # Extrude the face to create the cylinder
-          face.pushpull(height)
-
-          result = {
-            id: group.entityID,
-            success: true
-          }
-          log "Created cylinder, returning result: #{result.inspect}"
-          result
-        rescue StandardError => e
-          log "Error creating cylinder: #{e.message}"
-          log e.backtrace.join("\n")
-          raise
+        num_segments.times do |i|
+          angle = Math::PI * 2 * i / num_segments
+          x = center[0] + radius * Math.cos(angle)
+          y = center[1] + radius * Math.sin(angle)
+          z = center[2]
+          circle_points << [x, y, z]
         end
+
+        face = group.entities.add_face(circle_points)
+        face.pushpull(height)
+        { id: group.entityID, success: true }
       when "sphere"
-        log "Creating sphere at position #{pos.inspect} with dimensions #{dims.inspect}"
+        group = entities.add_group
+        radius = dims[0] / 2.0
+        center = [pos[0] + radius, pos[1] + radius, pos[2] + radius]
 
-        begin
-          # Create a group to contain the sphere
-          group = entities.add_group
-
-          # Extract dimensions
-          radius = dims[0] / 2.0
-          center = [pos[0] + radius, pos[1] + radius, pos[2] + radius]
-
-          # Use SketchUp's built-in sphere method if available
-          if Sketchup::Tools.respond_to?(:create_sphere)
-            Sketchup::Tools.create_sphere(center, radius, 24, group.entities)
-          else
-            # Fallback implementation using polygons
-            # Create a UV sphere with latitude and longitude segments
-            segments = 16
-
-            # Create points for the sphere
-            points = []
-            for lat_i in 0..segments
-              lat = Math::PI * lat_i / segments
-              for lon_i in 0..segments
-                lon = 2 * Math::PI * lon_i / segments
-                x = center[0] + radius * Math.sin(lat) * Math.cos(lon)
-                y = center[1] + radius * Math.sin(lat) * Math.sin(lon)
-                z = center[2] + radius * Math.cos(lat)
-                points << [x, y, z]
-              end
-            end
-
-            # Create faces for the sphere (simplified approach)
-            for lat_i in 0...segments
-              for lon_i in 0...segments
-                i1 = lat_i * (segments + 1) + lon_i
-                i2 = i1 + 1
-                i3 = i1 + segments + 1
-                i4 = i3 + 1
-
-                # Create a quad face
-                begin
-                  group.entities.add_face(points[i1], points[i2], points[i4], points[i3])
-                rescue StandardError => e
-                  # Skip faces that can't be created (may happen at poles)
-                  log "Skipping face: #{e.message}"
-                end
-              end
+        if Sketchup::Tools.respond_to?(:create_sphere)
+          Sketchup::Tools.create_sphere(center, radius, 24, group.entities)
+        else
+          segments = 16
+          points = []
+          for lat_i in 0..segments
+            lat = Math::PI * lat_i / segments
+            for lon_i in 0..segments
+              lon = 2 * Math::PI * lon_i / segments
+              x = center[0] + radius * Math.sin(lat) * Math.cos(lon)
+              y = center[1] + radius * Math.sin(lat) * Math.sin(lon)
+              z = center[2] + radius * Math.cos(lat)
+              points << [x, y, z]
             end
           end
 
-          result = {
-            id: group.entityID,
-            success: true
-          }
-          log "Created sphere, returning result: #{result.inspect}"
-          result
-        rescue StandardError => e
-          log "Error creating sphere: #{e.message}"
-          log e.backtrace.join("\n")
-          raise
+          for lat_i in 0...segments
+            for lon_i in 0...segments
+              i1 = lat_i * (segments + 1) + lon_i
+              i2 = i1 + 1
+              i3 = i1 + segments + 1
+              i4 = i3 + 1
+              begin
+                group.entities.add_face(points[i1], points[i2], points[i4], points[i3])
+              rescue StandardError
+                # Skip faces that can't be created at the poles.
+              end
+            end
+          end
         end
+
+        { id: group.entityID, success: true }
       when "cone"
-        log "Creating cone at position #{pos.inspect} with dimensions #{dims.inspect}"
+        group = entities.add_group
+        radius = dims[0] / 2.0
+        height = dims[2]
+        center = [pos[0] + radius, pos[1] + radius, pos[2]]
+        apex = [center[0], center[1], center[2] + height]
+        num_segments = 24
+        circle_points = []
 
-        begin
-          # Create a group to contain the cone
-          group = entities.add_group
-
-          # Extract dimensions
-          radius = dims[0] / 2.0
-          height = dims[2]
-
-          # Create a circle at the base
-          center = [pos[0] + radius, pos[1] + radius, pos[2]]
-          apex = [center[0], center[1], center[2] + height]
-
-          # Create points for a circle
-          num_segments = 24  # Number of segments for the circle
-          circle_points = []
-
-          num_segments.times do |i|
-            angle = Math::PI * 2 * i / num_segments
-            x = center[0] + radius * Math.cos(angle)
-            y = center[1] + radius * Math.sin(angle)
-            z = center[2]
-            circle_points << [x, y, z]
-          end
-
-          # Create the circular face for the base
-          base = group.entities.add_face(circle_points)
-
-          # Create the cone sides
-          (0...num_segments).each do |i|
-            j = (i + 1) % num_segments
-            # Create a triangular face from two adjacent points on the circle to the apex
-            group.entities.add_face(circle_points[i], circle_points[j], apex)
-          end
-
-          result = {
-            id: group.entityID,
-            success: true
-          }
-          log "Created cone, returning result: #{result.inspect}"
-          result
-        rescue StandardError => e
-          log "Error creating cone: #{e.message}"
-          log e.backtrace.join("\n")
-          raise
+        num_segments.times do |i|
+          angle = Math::PI * 2 * i / num_segments
+          x = center[0] + radius * Math.cos(angle)
+          y = center[1] + radius * Math.sin(angle)
+          z = center[2]
+          circle_points << [x, y, z]
         end
+
+        group.entities.add_face(circle_points)
+        (0...num_segments).each do |i|
+          j = (i + 1) % num_segments
+          group.entities.add_face(circle_points[i], circle_points[j], apex)
+        end
+        { id: group.entityID, success: true }
       else
         raise "Unknown component type: #{params["type"]}"
       end
@@ -241,12 +140,10 @@ module SU_MCP
 
       # Handle ID format - strip quotes if present
       id_str = params["id"].to_s.gsub('"', '')
-      log "Looking for entity with ID: #{id_str}"
 
       entity = model.find_entity_by_id(id_str.to_i)
 
       if entity
-        log "Found entity: #{entity.inspect}"
         entity.erase!
         { success: true }
       else
@@ -259,17 +156,13 @@ module SU_MCP
 
       # Handle ID format - strip quotes if present
       id_str = params["id"].to_s.gsub('"', '')
-      log "Looking for entity with ID: #{id_str}"
 
       entity = model.find_entity_by_id(id_str.to_i)
 
       if entity
-        log "Found entity: #{entity.inspect}"
-
         # Handle position
         if params["position"]
           pos = params["position"]
-          log "Transforming position to #{pos.inspect}"
 
           # Create a transformation to move the entity
           translation = Geom::Transformation.translation(Geom::Point3d.new(pos[0], pos[1], pos[2]))
@@ -279,7 +172,6 @@ module SU_MCP
         # Handle rotation (in degrees)
         if params["rotation"]
           rot = params["rotation"]
-          log "Rotating by #{rot.inspect} degrees"
 
           # Convert to radians
           x_rot = rot[0] * Math::PI / 180
@@ -306,7 +198,6 @@ module SU_MCP
         # Handle scale
         if params["scale"]
           scale = params["scale"]
-          log "Scaling by #{scale.inspect}"
 
           # Create a transformation to scale the entity
           center = entity.bounds.center
@@ -324,8 +215,6 @@ module SU_MCP
       model = @model || Sketchup.active_model
       selection = model.selection
 
-      log "Getting selection, count: #{selection.length}"
-
       selected_entities = selection.map do |entity|
         {
           id: entity.entityID,
@@ -337,7 +226,6 @@ module SU_MCP
     end
 
     def export_scene(params)
-      log "Exporting scene with params: #{params.inspect}"
       model = @model || Sketchup.active_model
 
       format = params["format"] || "skp"
@@ -357,15 +245,12 @@ module SU_MCP
         case format.downcase
         when "skp"
           # Export as SketchUp file
-          log "Exporting to SketchUp file: #{export_path}"
           unless model.respond_to?(:save_copy) && model.save_copy(export_path)
             raise 'SketchUp save-copy failed'
           end
 
         when "obj"
           # Export as OBJ file
-          log "Exporting to OBJ file: #{export_path}"
-
           # Check if OBJ exporter is available
           options = {
             :triangulated_faces => true,
@@ -377,16 +262,12 @@ module SU_MCP
 
         when "dae"
           # Export as COLLADA file
-          log "Exporting to COLLADA file: #{export_path}"
-
           # Check if COLLADA exporter is available
           options = { :triangulated_faces => true }
           raise 'COLLADA export failed' unless model.export(export_path, options)
 
         when "stl"
           # Export as STL file
-          log "Exporting to STL file: #{export_path}"
-
           # Check if STL exporter is available
           options = { :units => "model" }
           raise 'STL export failed' unless model.export(export_path, options)
@@ -394,8 +275,6 @@ module SU_MCP
         when "png", "jpg", "jpeg"
           # Export as image
           ext = extension
-          log "Exporting to image file: #{export_path}"
-
           # Get the current view
           view = model.active_view
 
@@ -415,36 +294,27 @@ module SU_MCP
           raise "Unsupported export format: #{format}"
         end
 
-        log "Export completed successfully to: #{export_path}"
-
         {
           success: true,
           path: export_path,
           format: format
         }
-      rescue StandardError => e
+      rescue StandardError
         FileUtils.rm_rf(export_dir) if defined?(export_dir) && export_dir
-        log "Error in export_scene: #{e.message}"
-        log e.backtrace.join("\n")
         raise
       end
     end
 
     def set_material(params)
-      log "Setting material with params: #{params.inspect}"
       model = @model || Sketchup.active_model
 
       # Handle ID format - strip quotes if present
       id_str = params["id"].to_s.gsub('"', '')
-      log "Looking for entity with ID: #{id_str}"
 
       entity = model.find_entity_by_id(id_str.to_i)
 
       if entity
-        log "Found entity: #{entity.inspect}"
-
         material_name = params["material"]
-        log "Setting material to: #{material_name}"
 
         # Get or create the material
         material = model.materials[material_name]
@@ -511,7 +381,6 @@ module SU_MCP
     end
 
     def boolean_operation(params, solid_method:)
-      log "Performing boolean operation with params: #{params.inspect}"
       model = @model || Sketchup.active_model
       operation_type = params["operation"]
       raise "SketchUp solid #{operation_type} is unavailable" unless solid_method

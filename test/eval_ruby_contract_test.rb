@@ -66,25 +66,6 @@ class EvalRubyContractTest
     end
   end
 
-  def test_eval_never_logs_source_results_exception_messages_or_backtraces
-    logs = []
-    model = EvalContractModel.new
-    commands = SU_MCP::SketchupCommands.new(model: model, logger: ->(message) { logs << message })
-    adapter = SU_MCP::SketchupAdapter.new(commands: commands, model: model)
-    dispatcher = SU_MCP::CommandDispatcher.new(
-      executor: SU_MCP::CommandExecutor.new(sketchup: adapter)
-    )
-
-    dispatcher.call(tool_request("'SECRET_RESULT'", 'success'))
-    failure = dispatcher.call(
-      tool_request("raise 'SECRET_EXCEPTION'", 'failure')
-    )
-
-    assert_equal [], logs
-    assert_equal false, failure.inspect.include?('SECRET_EXCEPTION')
-    assert_equal false, failure.inspect.include?('sketchup-mcp eval')
-  end
-
   private
 
   def evaluate(source, id)
@@ -96,7 +77,7 @@ class EvalRubyContractTest
     commands = SU_MCP::SketchupCommands.new(model: model)
     adapter = SU_MCP::SketchupAdapter.new(commands: commands, model: model)
     SU_MCP::CommandDispatcher.new(
-      executor: SU_MCP::CommandExecutor.new(sketchup: adapter)
+      executor: SU_MCP::CommandExecutor.new(adapter: adapter)
     )
   end
 

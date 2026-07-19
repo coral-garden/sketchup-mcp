@@ -9,13 +9,25 @@ each invocation to the SketchUp extension that owns the active model.
 The user-facing application that discovers and invokes SketchUp commands through MCP.
 _Avoid_: Claude, client, AI server
 
+**MCP client**:
+The protocol role within an MCP host that connects to the MCP server and invokes tools.
+_Avoid_: MCP host, bridge client
+
 **MCP server**:
 The process that publishes the command catalog to an MCP host and delegates command invocations across the bridge.
 _Avoid_: Python client, SketchUp server
 
 **SketchUp extension**:
-The code running inside SketchUp that receives command invocations and applies them to the active model.
+The installed SketchUp package that provides the bridge and modeling integration.
 _Avoid_: Ruby server, plugin server
+
+**Extension runtime**:
+The active role inside the SketchUp extension that owns bridge availability and coordinates command handling with SketchUp.
+_Avoid_: MCP server, Ruby server, command executor
+
+**SketchUp runtime**:
+The live SketchUp application environment that owns the active model and user interface.
+_Avoid_: extension runtime, SketchUp adapter
 
 **Bridge**:
 The private, loopback-only exchange between the MCP server and the SketchUp extension.
@@ -57,8 +69,7 @@ it over, independent of which SketchUp adapter it runs against.
 _Avoid_: server, handler, dispatcher
 
 **SketchUp adapter**:
-The swappable role a command executor reaches a model through — the real
-SketchUp runtime in production, a controlled double in headless tests.
+The role that translates command-executor calls into operations against the SketchUp runtime.
 _Avoid_: bridge listener, SketchUp wrapper
 
 ---

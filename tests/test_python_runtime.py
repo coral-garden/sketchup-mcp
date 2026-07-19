@@ -1,8 +1,14 @@
 import asyncio
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
+import tempfile
 import unittest
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 from sketchup_mcp.bridge import (
     BridgeClient,
@@ -39,10 +45,7 @@ def call_create_component(client, request_id, **arguments):
 
 
 class PythonRuntimeTest(unittest.TestCase):
-    def test_python_fastmcp_commands_execute_through_the_real_ruby_bridge(self):
-        from mcp.shared.memory import create_connected_server_and_client_session
-        from sketchup_mcp import server as exported_server
-
+    def test_stdio_mcp_entrypoint_executes_through_the_real_ruby_bridge(self):
         commands = (
             SCENE_GEOMETRY_CONTRACT["commands"]
             + JOINERY_EVAL_CONTRACT["commands"]
@@ -68,23 +71,42 @@ class PythonRuntimeTest(unittest.TestCase):
             port = json.loads(ready_frame)["port"]
 
             async def call_all_tools():
-                client = BridgeClient.for_tcp(
-                    port=port,
-                    timeout=2,
-                    max_attempts=1,
+                repo_root = Path(__file__).parents[1]
+                environment = {
+                    **os.environ,
+                    "PYTHONPATH": str(repo_root / "src"),
+                    "SKETCHUP_MCP_BRIDGE_PORT": str(port),
+                }
+                parameters = StdioServerParameters(
+                    command=sys.executable,
+                    args=["-m", "sketchup_mcp"],
+                    env=environment,
+                    cwd=repo_root,
                 )
-                with exported_server.use_bridge_client(client):
-                    async with create_connected_server_and_client_session(
-                        exported_server.mcp
-                    ) as session:
-                        return [
-                            await session.call_tool(
-                                command["name"], command["arguments"]
-                            )
-                            for command in commands
-                        ]
+                with tempfile.TemporaryFile(
+                    mode="w+", encoding="utf-8"
+                ) as mcp_stderr:
+                    async with stdio_client(
+                        parameters, errlog=mcp_stderr
+                    ) as streams:
+                        async with ClientSession(*streams) as session:
+                            await session.initialize()
+                            results = []
+                            for command in commands:
+                                arguments = command["arguments"]
+                                if command["name"] == "eval_ruby":
+                                    arguments = {
+                                        "code": "'RAW_STDIO_EVAL_SOURCE'"
+                                    }
+                                results.append(
+                                    await session.call_tool(
+                                        command["name"], arguments
+                                    )
+                                )
+                    mcp_stderr.seek(0)
+                    return results, mcp_stderr.read()
 
-            results = asyncio.run(call_all_tools())
+            results, mcp_logs = asyncio.run(call_all_tools())
             _stdout, stderr = process.communicate(input="done\n", timeout=2)
             communicated = True
             self.assertEqual(0, process.returncode, stderr)
@@ -102,6 +124,12 @@ class PythonRuntimeTest(unittest.TestCase):
             self.assertEqual(
                 json.dumps(command["wire_result"]), result.content[0].text
             )
+        self.assertIn("MCP server starting", mcp_logs)
+        self.assertIn("Bridge client exchange", mcp_logs)
+        self.assertNotIn("RAW_STDIO_EVAL_SOURCE", mcp_logs)
+        self.assertIn("Bridge listener:", stderr)
+        self.assertIn("Command executor:", stderr)
+        self.assertNotIn("RAW_STDIO_EVAL_SOURCE", stderr)
 
     def test_all_eleven_catalog_commands_register_and_reach_the_bridge(self):
         from mcp.shared.memory import create_connected_server_and_client_session
@@ -811,7 +839,7 @@ class PythonRuntimeTest(unittest.TestCase):
     def test_create_component_logs_metadata_without_raw_arguments(self):
         adapter = InMemoryBridgeAdapter.returning(CONTRACT["success_result"])
 
-        with self.assertLogs("SketchupMCPServer", level="INFO") as captured:
+        with self.assertLogs("SketchUpMCP", level="INFO") as captured:
             call_create_component(
                 BridgeClient(adapter=adapter),
                 "safe-log-id",
@@ -884,8 +912,8 @@ class PythonRuntimeTest(unittest.TestCase):
             tool.name for tool in asyncio.run(exported_server.mcp.list_tools())
         ]
         self.assertIn("create_component", tool_names)
-        self.assertIn('sketchup-mcp = "sketchup_mcp.server:main"', project)
-        self.assertIn('sketchup = "sketchup_mcp.server:mcp"', project)
+        self.assertIn('sketchup-mcp = "sketchup_mcp.mcp_server:main"', project)
+        self.assertIn('sketchup = "sketchup_mcp.mcp_server:mcp"', project)
 
 
 if __name__ == "__main__":

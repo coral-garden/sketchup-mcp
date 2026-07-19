@@ -75,7 +75,7 @@ class CreateComponentContractTest
   def dispatch(arguments, request_id:, created_id:, failure: nil)
     sketchup = ContractSketchup.new(created_id: created_id, failure: failure)
     dispatcher = SU_MCP::CommandDispatcher.new(
-      executor: SU_MCP::CommandExecutor.new(sketchup: sketchup)
+      executor: SU_MCP::CommandExecutor.new(adapter: sketchup)
     )
 
     dispatcher.call(

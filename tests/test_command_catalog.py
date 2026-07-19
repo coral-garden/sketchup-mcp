@@ -300,9 +300,9 @@ print(json.dumps({
             shutil.copytree(REPO_ROOT / "docs", fixture / "docs")
             shutil.copy(REPO_ROOT / "README.md", fixture / "README.md")
 
-            server = fixture / "src/sketchup_mcp/server.py"
-            server.write_text(
-                server.read_text(encoding="utf-8").replace(
+            mcp_server = fixture / "src/sketchup_mcp/mcp_server.py"
+            mcp_server.write_text(
+                mcp_server.read_text(encoding="utf-8").replace(
                     "@mcp.tool()\ndef eval_ruby(", "def eval_ruby(", 1
                 ),
                 encoding="utf-8",

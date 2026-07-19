@@ -23,14 +23,17 @@ results = commands.to_h do |command|
   [command.fetch('name'), command.fetch('command_result')]
 end
 catalog = SU_MCP::CommandCatalog.new
+logger = ->(message) { STDERR.write("#{message}\n") }
 executor = SU_MCP::CommandExecutor.new(
-  sketchup: ContractAdapter.new(results),
-  catalog: catalog
+  adapter: ContractAdapter.new(results),
+  catalog: catalog,
+  logger: logger
 )
 dispatcher = SU_MCP::CommandDispatcher.new(executor: executor, catalog: catalog)
 request_count = 0
 listener = SU_MCP::BridgeListener.new(
   port: 0,
+  logger: logger,
   handler: lambda do |request|
     request_count += 1
     dispatcher.call(request)

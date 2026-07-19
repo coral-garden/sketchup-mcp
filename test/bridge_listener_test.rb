@@ -109,15 +109,15 @@ end
 
 
 class ControlledSocketTransport
-  def initialize(server:, clock: ControlledClock.new, stall_writes: false)
-    @server = server
+  def initialize(listening_socket:, clock: ControlledClock.new, stall_writes: false)
+    @listening_socket = listening_socket
     @clock = clock
     @stall_writes = stall_writes
   end
 
   def listen(host, port)
     @listened_on = [host, port]
-    @server
+    @listening_socket
   end
 
   def now
@@ -125,7 +125,7 @@ class ControlledSocketTransport
   end
 
   def wait(socket, direction, timeout)
-    return true if socket.equal?(@server)
+    return true if socket.equal?(@listening_socket)
     return true unless @stall_writes && direction == :write
 
     @clock.advance(timeout)
@@ -255,7 +255,7 @@ class BridgeListenerTest
     client = StalledWriteClient.new(
       JSON.generate(jsonrpc: '2.0', method: 'tools/call', id: 54) + "\n"
     )
-    server = ControlledServerSocket.new(client)
+    listening_socket = ControlledServerSocket.new(client)
     messages = []
     logging_threads = []
     listener = SU_MCP::BridgeListener.new(
@@ -263,7 +263,7 @@ class BridgeListenerTest
       handler: ->(request) { { jsonrpc: '2.0', result: {}, id: request['id'] } },
       io_timeout: 0.25,
       transport: ControlledSocketTransport.new(
-        server: server,
+        listening_socket: listening_socket,
         clock: clock,
         stall_writes: true
       ),
@@ -282,18 +282,18 @@ class BridgeListenerTest
     listener.drain
 
     assert_equal 1, client.write_attempts
-    assert_includes messages.join("\n"), 'Bridge I/O error: write timed out'
+    assert_includes messages.join("\n"), 'Bridge listener: I/O error: write timed out'
     assert_equal [Thread.current], logging_threads.uniq
   end
 
   def test_half_closed_request_without_newline_is_rejected_by_the_io_worker
     client = IncompleteFrameClient.new('{"jsonrpc":"2.0","id":56}')
-    server = ControlledServerSocket.new(client)
+    listening_socket = ControlledServerSocket.new(client)
     handler_calls = 0
     listener = SU_MCP::BridgeListener.new(
       port: 0,
       handler: ->(_request) { handler_calls += 1 },
-      transport: ControlledSocketTransport.new(server: server)
+      transport: ControlledSocketTransport.new(listening_socket: listening_socket)
     )
     @listeners ||= []
     @listeners << listener
