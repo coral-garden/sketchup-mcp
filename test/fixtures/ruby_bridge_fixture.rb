@@ -16,7 +16,10 @@ begin
   listener.start
   STDOUT.write(JSON.generate(port: listener.port) + "\n")
   STDOUT.flush
-  listener.poll(timeout: 2) until request_count == 2
+  until request_count == 2
+    listener.poll(timeout: 0.01)
+    listener.drain
+  end
 ensure
   listener.stop
 end

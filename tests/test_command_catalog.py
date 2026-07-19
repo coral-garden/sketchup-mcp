@@ -217,9 +217,14 @@ print(json.dumps({
                 "@mcp.tool()\ndef create_component():\n    pass\n",
                 encoding="utf-8",
             )
-            (fixture / "su_mcp/su_mcp/main.rb").write_text(
-                'def handle_tool_call\n  when "create_component"\nend\n'
-                "def create_component\nend\n",
+            (fixture / "su_mcp/su_mcp/sketchup_commands.rb").write_text(
+                "COMMAND_METHODS = {\n"
+                "  'create_component' => :create_component\n"
+                "}.freeze\n",
+                encoding="utf-8",
+            )
+            (fixture / "su_mcp/su_mcp/command_executor.rb").write_text(
+                "RENAMED_COMMANDS = {}.freeze\n",
                 encoding="utf-8",
             )
             (fixture / "sketchup.json").write_text(

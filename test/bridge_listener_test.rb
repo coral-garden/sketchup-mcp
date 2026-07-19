@@ -2,9 +2,141 @@ require 'json'
 require 'socket'
 
 require_relative '../su_mcp/su_mcp/bridge_listener'
+require_relative 'headless'
+
+
+class ControlledClock
+  def initialize
+    @now = 0.0
+  end
+
+  def call
+    @now
+  end
+
+  def advance(seconds)
+    @now += seconds
+  end
+end
+
+
+class StalledWriteClient
+  attr_reader :write_attempts
+
+  def initialize(request_frame)
+    @request_frame = request_frame
+    @write_attempts = 0
+    @closed = false
+  end
+
+  def read_nonblock(_length, exception:)
+    frame = @request_frame
+    @request_frame = nil
+    frame
+  end
+
+  def write_nonblock(_bytes, exception:)
+    @write_attempts += 1
+    :wait_writable
+  end
+
+  def close
+    @closed = true
+  end
+
+  def closed?
+    @closed
+  end
+end
+
+
+class IncompleteFrameClient
+  attr_reader :response
+
+  def initialize(request_fragment)
+    @request_fragment = request_fragment
+    @closed = false
+    @response = +''
+  end
+
+  def read_nonblock(_length, exception:)
+    fragment = @request_fragment
+    @request_fragment = nil
+    fragment
+  end
+
+  def write_nonblock(bytes, exception:)
+    @response << bytes
+    bytes.bytesize
+  end
+
+  def close
+    @closed = true
+  end
+
+  def closed?
+    @closed
+  end
+end
+
+
+class ControlledServerSocket
+  Address = Struct.new(:ip_port, :ip_address)
+
+  def initialize(client)
+    @client = client
+    @closed = false
+  end
+
+  def local_address
+    Address.new(12_345, '127.0.0.1')
+  end
+
+  def accept_nonblock
+    client = @client
+    @client = nil
+    client
+  end
+
+  def close
+    @closed = true
+  end
+
+  def closed?
+    @closed
+  end
+end
+
+
+class ControlledSocketTransport
+  def initialize(server:, clock: ControlledClock.new, stall_writes: false)
+    @server = server
+    @clock = clock
+    @stall_writes = stall_writes
+  end
+
+  def listen(host, port)
+    @listened_on = [host, port]
+    @server
+  end
+
+  def now
+    @clock.call
+  end
+
+  def wait(socket, direction, timeout)
+    return true if socket.equal?(@server)
+    return true unless @stall_writes && direction == :write
+
+    @clock.advance(timeout)
+    false
+  end
+end
 
 
 class BridgeListenerTest
+  include HeadlessTest::Assertions
+
   def teardown
     @listeners&.each(&:stop)
   end
@@ -104,26 +236,79 @@ class BridgeListenerTest
     ENV['SKETCHUP_MCP_BRIDGE_PORT'] = previous
   end
 
+  def test_accepting_a_silent_client_never_blocks_the_polling_thread
+    listener = start_listener(io_timeout: 0.05)
+    client = TCPSocket.new('127.0.0.1', listener.port)
+
+    started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    accepted = listener.poll(timeout: 1)
+    elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+
+    assert_equal true, accepted
+    assert_operator elapsed, :<, 0.04
+  ensure
+    client&.close
+  end
+
+  def test_stalled_response_write_times_out_off_the_polling_thread
+    clock = ControlledClock.new
+    client = StalledWriteClient.new(
+      JSON.generate(jsonrpc: '2.0', method: 'tools/call', id: 54) + "\n"
+    )
+    server = ControlledServerSocket.new(client)
+    messages = []
+    logging_threads = []
+    listener = SU_MCP::BridgeListener.new(
+      port: 0,
+      handler: ->(request) { { jsonrpc: '2.0', result: {}, id: request['id'] } },
+      io_timeout: 0.25,
+      transport: ControlledSocketTransport.new(
+        server: server,
+        clock: clock,
+        stall_writes: true
+      ),
+      logger: ->(message) {
+        messages << message
+        logging_threads << Thread.current
+      }
+    )
+    @listeners ||= []
+    @listeners << listener
+    listener.start
+
+    assert_equal true, listener.poll
+    wait_until { listener.drain == 1 }
+    wait_until { client.closed? }
+    listener.drain
+
+    assert_equal 1, client.write_attempts
+    assert_includes messages.join("\n"), 'Bridge I/O error: write timed out'
+    assert_equal [Thread.current], logging_threads.uniq
+  end
+
+  def test_half_closed_request_without_newline_is_rejected_by_the_io_worker
+    client = IncompleteFrameClient.new('{"jsonrpc":"2.0","id":56}')
+    server = ControlledServerSocket.new(client)
+    handler_calls = 0
+    listener = SU_MCP::BridgeListener.new(
+      port: 0,
+      handler: ->(_request) { handler_calls += 1 },
+      transport: ControlledSocketTransport.new(server: server)
+    )
+    @listeners ||= []
+    @listeners << listener
+    listener.start
+
+    assert_equal true, listener.poll
+    wait_until { client.closed? }
+    response = JSON.parse(client.response)
+
+    assert_equal(-32_700, response.dig('error', 'code'))
+    assert_equal nil, response['id']
+    assert_equal 0, handler_calls
+  end
+
   private
-
-  def assert_equal(expected, actual)
-    return if expected == actual
-
-    raise "Expected #{expected.inspect}, got #{actual.inspect}"
-  end
-
-  def assert_includes(value, fragment)
-    return if value.include?(fragment)
-
-    raise "Expected #{value.inspect} to include #{fragment.inspect}"
-  end
-
-  def assert_raises(error_class)
-    yield
-    raise "Expected #{error_class} to be raised"
-  rescue error_class => error
-    error
-  end
 
   def exchange(listener, request)
     raw_exchange(listener, JSON.generate(request) + "\n")
@@ -135,6 +320,13 @@ class BridgeListenerTest
     client.flush
     client.close_write if close_write
     listener.poll(timeout: 1)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 1
+    until IO.select([client], nil, nil, 0.001)
+      listener.drain
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+        raise 'listener did not produce a response'
+      end
+    end
     response_frame = client.gets
     eof = client.read
     [JSON.parse(response_frame), response_frame, eof]
@@ -142,10 +334,11 @@ class BridgeListenerTest
     client&.close
   end
 
-  def start_listener(port: 0, &handler)
+  def start_listener(port: 0, io_timeout: 1, &handler)
     @listeners ||= []
     listener = SU_MCP::BridgeListener.new(
       port: port,
+      io_timeout: io_timeout,
       handler: handler || ->(request) {
         { jsonrpc: '2.0', result: {}, id: request['id'] }
       }
@@ -154,27 +347,9 @@ class BridgeListenerTest
     @listeners << listener
     listener
   end
+
+
 end
 
 
-failures = []
-tests = BridgeListenerTest.instance_methods(false).grep(/^test_/).sort
-tests.each do |test_name|
-  test = BridgeListenerTest.new
-  begin
-    test.public_send(test_name)
-    print '.'
-  rescue StandardError => error
-    print 'F'
-    failures << [test_name, error]
-  ensure
-    test.teardown
-  end
-end
-puts
-failures.each do |test_name, error|
-  warn "#{test_name}: #{error.class}: #{error.message}"
-  warn error.backtrace.join("\n")
-end
-puts "#{tests.length} tests, #{failures.length} failures"
-exit(failures.empty? ? 0 : 1)
+HeadlessTest.run(BridgeListenerTest)

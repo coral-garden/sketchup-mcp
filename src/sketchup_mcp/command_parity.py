@@ -81,13 +81,29 @@ def _python_mcp_commands(source: str) -> set[str]:
     return commands
 
 
-def _ruby_extension_commands(source: str) -> set[str]:
-    dispatch_start = source.index("def handle_tool_call")
-    dispatch_end = source.index("def create_component", dispatch_start)
-    dispatch = source[dispatch_start:dispatch_end]
-    commands: set[str] = set()
-    for names in re.findall(r"^\s*when\s+(.+)$", dispatch, flags=re.MULTILINE):
-        commands.update(re.findall(r'"([a-z][a-z0-9_]*)"', names))
+def _ruby_extension_commands(command_source: str, executor_source: str) -> set[str]:
+    command_map = re.search(
+        r"COMMAND_METHODS\s*=\s*\{(?P<entries>.*?)\}\s*\.freeze",
+        command_source,
+        flags=re.DOTALL,
+    )
+    if command_map is None:
+        return set()
+    commands = set(
+        re.findall(r"['\"]([a-z][a-z0-9_]*)['\"]\s*=>", command_map["entries"])
+    )
+    rename_map = re.search(
+        r"RENAMED_COMMANDS\s*=\s*\{(?P<entries>.*?)\}\s*\.freeze",
+        executor_source,
+        flags=re.DOTALL,
+    )
+    if rename_map is not None:
+        commands.update(
+            re.findall(
+                r"['\"]([a-z][a-z0-9_]*)['\"]\s*=>",
+                rename_map["entries"],
+            )
+        )
     return commands
 
 
@@ -121,7 +137,8 @@ def repository_command_names(repo_root: str | Path) -> dict[str, set[str]]:
             (root / "src/sketchup_mcp/server.py").read_text(encoding="utf-8")
         ),
         "ruby_extension": _ruby_extension_commands(
-            (root / "su_mcp/su_mcp/main.rb").read_text(encoding="utf-8")
+            (root / "su_mcp/su_mcp/sketchup_commands.rb").read_text(encoding="utf-8"),
+            (root / "su_mcp/su_mcp/command_executor.rb").read_text(encoding="utf-8"),
         ),
         "manifest": _manifest_commands(
             (root / "sketchup.json").read_text(encoding="utf-8")
