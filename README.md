@@ -22,13 +22,23 @@ Once the bridge is running, these are ordinary prompts to your MCP host:
 
 | Ask | What happens |
 | --- | --- |
-| *"Add a 600 mm cube at the origin."* | A grouped primitive appears in the model |
+| *"Add a 24 by 24 by 2 cube at the origin."* | A grouped primitive appears in the model |
 | *"What do I have selected?"* | The current selection is read back to you |
-| *"Move that panel up 200 mm and rotate it 90°."* | The entity is transformed in place |
-| *"Make the selected part walnut brown."* | A named or hexadecimal material is applied |
+| *"Move that panel up 8 and rotate it 90 degrees about z."* | The entity is transformed in place |
+| *"Make the selected part brown."* | A named or hexadecimal color is applied |
 | *"Cut a dovetail between these two boards."* | Matching tails and pins are cut into both |
-| *"Subtract the cylinder from the block."* | A boolean solid replaces the pair |
-| *"Export the model so I can print it."* | The model is written to a temporary file |
+| *"Union the cylinder and the block, deleting the originals."* | A new solid replaces the pair |
+| *"Export the model as STL."* | The model is written to a temporary file |
+
+**Two things to say explicitly when you ask.** Sizes and positions are plain
+numbers in **model units**, not millimetres or inches — a request for "600 mm"
+becomes 600 model units. And materials must be an existing model material, a
+`#RRGGBB` value, or one of the common color names (`red`, `green`, `blue`,
+`yellow`, `cyan`/`turquoise`, `magenta`/`purple`, `white`, `black`, `brown`,
+`orange`, `gray`/`grey`); anything else returns `Material not found`.
+
+Boolean operations keep both source entities unless you ask for the originals to
+be deleted. Rotations are degrees about the x, y, and z axes.
 
 Joinery is real geometry, not a sketch: the mortise-and-tenon, dovetail, and
 finger-joint tools cut matching profiles into both boards and leave each one a
