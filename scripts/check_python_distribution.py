@@ -198,6 +198,26 @@ def _installed_python(environment: Path) -> Path:
     return environment / "bin" / "python"
 
 
+def _install_locked_runtime_requirements(
+    *, requirements: Path, python: Path, workspace: Path
+) -> None:
+    # The export pins every artifact by hash. Allow uv to fetch those exact
+    # artifacts because a fresh clone has no populated package-index cache yet.
+    _run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--require-hashes",
+            "--python",
+            str(python),
+            "--requirement",
+            str(requirements),
+        ],
+        cwd=workspace,
+    )
+
+
 def _check_wheel_from_sdist(sdist: Path, version: str, python: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="sketchup-mcp-python-dist-") as directory:
         workspace = Path(directory)
@@ -239,19 +259,10 @@ def _check_wheel_from_sdist(sdist: Path, version: str, python: Path) -> None:
             ],
             cwd=REPO_ROOT,
         )
-        _run(
-            [
-                "uv",
-                "pip",
-                "install",
-                "--offline",
-                "--require-hashes",
-                "--python",
-                str(installed_python),
-                "--requirement",
-                str(requirements),
-            ],
-            cwd=workspace,
+        _install_locked_runtime_requirements(
+            requirements=requirements,
+            python=installed_python,
+            workspace=workspace,
         )
         _run(
             [

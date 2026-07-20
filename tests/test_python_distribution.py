@@ -1,3 +1,4 @@
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -12,6 +13,22 @@ import zipfile
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_VERSION = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
 CHECKER = REPO_ROOT / "scripts" / "check_python_distribution.py"
+
+
+def load_checker_module():
+    scripts = str(CHECKER.parent)
+    sys.path.insert(0, scripts)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "check_python_distribution_contract", CHECKER
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("distribution checker could not be loaded")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.remove(scripts)
 
 
 class PythonDistributionVersionTest(unittest.TestCase):
@@ -47,6 +64,28 @@ class PythonDistributionVersionTest(unittest.TestCase):
         self.assertEqual("DistributionError", error_type)
         self.assertIn("project version is unavailable", message)
         self.assertEqual("PackageError", cause_type)
+
+    def test_locked_runtime_install_allows_hashed_downloads(self):
+        checker = load_checker_module()
+        recorded = []
+
+        def record(command, *, cwd):
+            recorded.append((command, cwd))
+
+        checker._run = record
+        workspace = Path("isolated-workspace")
+        checker._install_locked_runtime_requirements(
+            requirements=workspace / "runtime-requirements.txt",
+            python=workspace / "venv/bin/python",
+            workspace=workspace,
+        )
+
+        self.assertEqual(1, len(recorded))
+        command, cwd = recorded[0]
+        self.assertEqual(workspace, cwd)
+        self.assertEqual(["uv", "pip", "install"], command[:3])
+        self.assertIn("--require-hashes", command)
+        self.assertNotIn("--offline", command)
 
     def test_invalid_version_translates_shared_package_error(self):
         with tempfile.TemporaryDirectory() as temporary:
