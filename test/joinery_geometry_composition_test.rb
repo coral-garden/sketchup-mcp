@@ -241,7 +241,84 @@ class JoineryGeometryCompositionTest
     assert_equal [], model.operations
   end
 
+  # The assertions above count profiles; these measure them. Without dimensional
+  # checks, changes to cell width, spacing, taper, or extrusion depth leave every
+  # topology assertion green.
+  def test_finger_profiles_have_the_requested_cell_width_spacing_and_depth
+    model = JoineryGeometryModel.new
+    response = dispatcher_for(model).call(
+      tool_request(
+        'create_finger_joint',
+        {
+          'board1_id' => 1, 'board2_id' => 2, 'num_fingers' => 3,
+          'width' => 12.0, 'height' => 6.0, 'depth' => 2.0
+        },
+        'fingers'
+      )
+    )
+    assert_equal nil, response[:error]
+
+    profiles = face_profiles(model).first(3)
+    # width 12 over (3 * 2) - 1 = 5 cells
+    cell_width = 12.0 / 5
+    profiles.each do |points|
+      assert_close cell_width, bottom_width(points)
+      assert_close cell_width, top_width(points)
+      assert_close 6.0, profile_height(points)
+    end
+
+    centres = profiles.map { |points| centre_x(points) }
+    assert_close 2 * cell_width, centres[1] - centres[0]
+    assert_close 2 * cell_width, centres[2] - centres[1]
+    # Spacing alone is shift-invariant, so pin the absolute position too: the
+    # middle profile of an odd-count joint sits on the mating-face centre.
+    assert_close 5.0, centres[1]
+
+    depths = model.trace.select { |event| event.first == :pushpull }.map(&:last)
+    assert_equal [2.0] * 6, depths
+  end
+
+  def test_dovetail_profiles_flare_by_the_capped_taper
+    model = JoineryGeometryModel.new
+    response = dispatcher_for(model).call(
+      tool_request(
+        'create_dovetail',
+        {
+          'tail_id' => 1, 'pin_id' => 2, 'num_tails' => 3, 'angle' => 60.0,
+          'width' => 12.0, 'height' => 6.0, 'depth' => 2.0
+        },
+        'tails'
+      )
+    )
+    assert_equal nil, response[:error]
+
+    cell_width = 12.0 / 5
+    # depth * tan(60°) is 3.46, so the cell_width * 0.45 cap binds at 1.08.
+    taper = cell_width * 0.45
+    face_profiles(model).first(3).each do |points|
+      assert_close cell_width, top_width(points)
+      assert_close cell_width + (2 * taper), bottom_width(points)
+      assert_operator bottom_width(points), :>, top_width(points)
+    end
+  end
+
   private
+
+  def face_profiles(model)
+    model.trace.select { |event| event.first == :add_face }.map(&:last)
+  end
+
+  # The mating frame for these bounds puts the width axis on X, height on Y.
+  def bottom_width(points) = (points[1][0] - points[0][0]).abs
+  def top_width(points) = (points[2][0] - points[3][0]).abs
+  def profile_height(points) = (points[3][1] - points[0][1]).abs
+  def centre_x(points) = points.map(&:first).sum / points.length
+
+  def assert_close(expected, actual, tolerance: 1e-9)
+    return if (expected - actual).abs <= tolerance
+
+    raise "expected #{expected}, got #{actual}"
+  end
 
   def dispatcher_for(model)
     commands = SU_MCP::SketchupCommands.new(model: model)
