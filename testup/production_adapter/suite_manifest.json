@@ -34,7 +34,6 @@
     "operation_start_failure_does_not_abort",
     "selection_and_resources",
     "set_material",
-    "transform_component_geometry",
-    "zz_write_runtime_report"
+    "transform_component_geometry"
   ]
 }

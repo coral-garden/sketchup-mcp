@@ -80,17 +80,16 @@ _Avoid_: server, handler, dispatcher
 The role that translates command-executor calls into operations against the SketchUp runtime.
 _Avoid_: bridge listener, SketchUp wrapper
 
-**SketchUp runtime evidence**:
-The integrity-checked raw-artifact record that a specific extension package and
-command catalog passed the production-adapter contract on a designated
-Windows/macOS runner, together with the operator's manual licensed-runner and
-single-TestUp-process attestations. Hashes protect the retained files from
-undetected changes; they do not prove process provenance.
-_Avoid_: headless proof, generic CI result
+**Main build**:
+The extension package, MCP server wheel, MCP server source distribution, and
+checksum manifest produced from one successful push to `main` after headless
+verification passes.
+_Avoid_: release, published package, desktop-verified build
 
-**Install acceptance evidence**:
-The integrity-checked record that one exact MCP server distribution and extension package completed MCP discovery and a read-only command through a fresh desktop launch of the installed SketchUp extension.
-_Avoid_: TestUp coverage, headless integration result, manual smoke test
+**Manual SketchUp acceptance**:
+The human-run TestUp and end-to-end MCP smoke checklist applied to one exact main
+build in a supported desktop SketchUp runtime.
+_Avoid_: CI gate, runtime evidence, automated acceptance
 
 ---
 

@@ -88,15 +88,32 @@ operationally simplest, but the TCP bridge does not enforce an account identity.
   uses Claude Desktop; its configuration flow follows the
   [official local-server guide](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
 
-The path below builds both sides from one clean checkout, so their project version
-and command catalog cannot drift. It depends on no unversioned package and no
-unverified binary.
+The path below installs both sides from one successful `main` build or reproduces
+that build from one clean checkout, so their project version and command catalog
+cannot drift. It depends on no unversioned package and no unverified binary.
 
 ## Install and verify
 
 Six steps, in order. Step 6 proves the whole path end to end.
 
-### 1. Build version 1.6.1 from a clean checkout
+### 1. Download or build version 1.6.1
+
+Every successful push to `main` uploads an Actions artifact named
+`main-build-<full-commit-sha>`. Download it from that commit's successful
+**Verification** run, extract it into `dist/`, check out the same full commit,
+and verify the package bytes:
+
+```sh
+cd dist
+sha256sum --check SHA256SUMS
+cd ..
+python scripts/build.py --check dist/sketchup-mcp-1.6.1.rbz
+```
+
+All checks must pass. The artifact contains the RBZ plus the MCP server wheel and
+source distribution built from that same commit.
+
+To reproduce the packages instead, start from a clean checkout:
 
 ```sh
 git clone https://github.com/coral-garden/sketchup-mcp.git
@@ -105,23 +122,19 @@ git status --short
 python -c "from pathlib import Path; assert Path('VERSION').read_text().strip() == '1.6.1'"
 ```
 
-`git status --short` must print nothing. Build the extension package, then ask the
-same builder to validate its layout, bytes, version, and load paths:
+`git status --short` must print nothing. Build the extension package and Python
+distributions, then ask the same builder to validate the RBZ layout, bytes,
+version, and load paths:
 
 ```sh
-python scripts/build.py
+uv sync --locked --python 3.10 --group build
+python scripts/build.py --output-dir dist
 python scripts/build.py --check dist/sketchup-mcp-1.6.1.rbz
+uv build --offline --no-build-isolation --out-dir dist
 ```
 
-The first command prints `Built dist/sketchup-mcp-1.6.1.rbz`, `Version: 1.6.1`,
-and the artifact's SHA-256. **Keep that digest with the file you install.**
-
-> If a [GitHub release for `v1.6.1`](https://github.com/coral-garden/sketchup-mcp/releases)
-> becomes available, use its RBZ only when all three published values agree: the tag
-> is `v1.6.1`, the filename is `sketchup-mcp-1.6.1.rbz`, and the published SHA-256
-> matches the downloaded file. Run the `--check` command above from a clean `v1.6.1`
-> checkout as a second validation. Compare its printed SHA-256 with the published
-> SHA-256. Until those release facts are present, use the source-build path.
+The builder prints `Built dist/sketchup-mcp-1.6.1.rbz`, `Version: 1.6.1`, and
+the RBZ SHA-256. **Keep that digest with the file you install.**
 
 ### 2. Install the extension in SketchUp
 
@@ -151,12 +164,11 @@ tool call fail until **Start Bridge** is chosen again.
 
 ### 4. Install the Python MCP server
 
-From the same checkout, create a private environment and install this exact source
-tree:
+Create a private environment and install the exact wheel paired with the RBZ:
 
 ```sh
 uv venv --python 3.12
-uv pip install --python .venv .
+uv pip install --python .venv dist/sketchup_mcp-1.6.1-py3-none-any.whl
 ```
 
 Confirm the installed Python MCP server has the same project version:
@@ -296,14 +308,11 @@ The fixed loopback host cannot be configured.
 The connection lifecycle and trust decision are recorded in
 [ADR 0001](docs/adr/0001-local-one-request-bridge-lifecycle.md).
 
-Release verification also requires clean-install acceptance from the protected
-licensed desktop workflow: a second SketchUp launch must use the already-installed
-exact RBZ and the exact built Python wheel to initialize MCP, discover the full
-tool catalog, and return an empty `get_selection` result. That proof launches the
-same installed `sketchup-mcp` console script and empty argument list documented in
-step 5, with only its absolute checkout prefix redacted from evidence. The
-repository contains the validator and adversarial fixtures, but no
-licensed-runner acceptance result.
+Automated verification stops at the hosted Python and headless Ruby boundary.
+Before making a release decision, a human installs the exact RBZ and wheel from
+one successful main build, runs the production-adapter TestUp suite, and confirms
+an empty `get_selection` result through the configured MCP host. See the
+[manual SketchUp acceptance checklist](docs/testing/sketchup-testup.md).
 
 ## Project documentation
 
@@ -311,8 +320,9 @@ licensed-runner acceptance result.
 | --- | --- |
 | [Domain language](CONTEXT.md) | The glossary every runtime role is named from |
 | [Public command catalog](docs/command-catalog.md) | Arguments, results, and failure semantics |
-| [Contributor workflow](CONTRIBUTING.md) | Setup, suites, packaging, release |
-| [Verification and release gate](docs/testing/verification.md) | What must pass, and how |
+| [Contributor workflow](CONTRIBUTING.md) | Setup, suites, packaging, and main builds |
+| [Verification and builds](docs/testing/verification.md) | Automated boundaries and artifacts |
+| [Manual SketchUp acceptance](docs/testing/sketchup-testup.md) | TestUp and end-to-end desktop checks |
 | [ADR 0001](docs/adr/0001-local-one-request-bridge-lifecycle.md) | Bridge lifecycle and trust decision |
 
 ## License
