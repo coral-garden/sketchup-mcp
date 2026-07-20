@@ -42,3 +42,6 @@ Thumbs.db
 
 # Generated verification artifacts
 /artifacts/
+
+# Local agent state
+.omx/
