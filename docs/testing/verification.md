@@ -98,12 +98,40 @@ log, dispatcher, operator, version, and loaded-file manifest. Release
 verification revalidates the input binding and its identity, RBZ, and pre-clean
 contents before accepting the runtime bundle.
 
+After TestUp succeeds, the workflow starts SketchUp a second time with the
+already-installed exact candidate. A checked-in static `-RubyStartup` harness
+reads adjacent JSON data, clears the model selection, obtains the extension
+runtime through `SU_MCP.extension_runtime`, and starts the production listener
+on the dedicated loopback port `19877`. The exact candidate wheel, installed
+into the locked `.venv`, runs the official Python MCP SDK stdio client. It must
+complete `initialize`, return exactly the command-catalog tool names from
+`list_tools`, and return the raw successful `CallToolResult` whose nested
+`get_selection` payload is exactly `{"entities":[]}`. The collector then writes
+the fixed stop marker; the harness stops the bridge and calls `Sketchup.quit`.
+Both ready and exit markers are bounded and retained.
+
+`scripts/install_acceptance.py` records a redacted MCP host configuration,
+exact wheel/sdist/RBZ hashes and sizes, installed-distribution identity,
+catalog and tool names, raw `CallToolResult`, SketchUp and OS versions,
+operator, dispatcher, GitHub run ID, random run ID, and timestamps. Its final
+manifest binds every raw file by SHA-256 and byte size and rejects symlinks,
+unsafe workspaces, stale or changed files, false attestations, a non-loopback or
+ordinary bridge port, catalog drift, or a nonempty selection. It exposes no
+command, host, repository, URL, or stop-action input.
+The recorded host configuration uses the same supported console-script shape as
+the README (`.venv/.../sketchup-mcp`, no arguments, and the shared port
+environment). The collector resolves that redacted command inside the exact
+wheel-installed environment and constructs `StdioServerParameters` directly
+from the recorded arguments and environment; there is no separate hard-coded
+launch path that can drift from the evidence.
+
 After SketchUp exits, the shared runner helper discovers #15's public raw
 artifact bundle, collects the evidence, and calls its public validator. The
 resulting artifact is named `sketchup-runtime-evidence-<workflow-run-id>` and
-retains the tested RBZ, installation proof, final evidence, and every raw input.
-A missing interactive runner leaves the workflow unable to produce an artifact;
-a missing suite, report, installation marker, or raw file fails the job.
+retains the tested RBZ, wheel, source distribution, installation proof, TestUp
+evidence, install-acceptance evidence, and every raw input. A missing interactive
+runner leaves the workflow unable to produce an artifact; a missing suite,
+report, installation marker, acceptance marker, or raw file fails the job.
 
 For a manual run outside GitHub, follow the exact platform commands in
 [the production-adapter guide](sketchup-testup.md). Those artifacts are useful
@@ -133,7 +161,10 @@ artifact identity, and full SHA all match. The GitHub run, artifact, and
 in-SketchUp evidence must be no more than 24 hours old. Finally it invokes the
 public runtime evidence validator, which requires the exact version, RBZ bytes,
 suite and command-catalog hashes, supported runtime, passing TestUp inventory,
-and 100% production-adapter line and branch coverage.
+and 100% production-adapter line and branch coverage. It then invokes the
+public install-acceptance validator against the retained RBZ, wheel, source
+distribution, trusted dispatcher, and GitHub workflow run ID. Either validator
+failing makes release verification fail closed.
 
 After release mode passes, the workflow prepares and validates the versioned
 RBZ, wheel, and source distribution and preserves them as a workflow artifact.
@@ -141,10 +172,15 @@ It does not create a tag, publish a GitHub release, or upload to a package
 registry.
 
 The aggregate result is `artifacts/verification/release.json`. It retains
-separate `python`, `headless_ruby`, and `sketchup_runtime` scopes. Python and
-headless Ruby each carry their measured covered/total line and branch counts
-plus fixed 100% thresholds; the SketchUp scope carries the production-adapter
-counts. The workflow preserves both `local.json` and `release.json` for audit
-but does not publish or modify a GitHub release.
+separate `python`, `headless_ruby`, `sketchup_runtime`, and
+`install_acceptance` scopes. Python and headless Ruby each carry their measured
+covered/total line and branch counts plus fixed 100% thresholds; the SketchUp
+scope carries the production-adapter counts. The workflow preserves both
+`local.json` and `release.json` for audit but does not publish or modify a
+GitHub release.
 Missing, malformed, expired, wrong-SHA, wrong-run, or wrong-package evidence
 fails closed and must be regenerated on the protected runner.
+
+The repository contains validator fixtures and controlled adversarial tests,
+not a licensed SketchUp acceptance result. Only the protected
+`SketchUp Runtime Evidence` workflow is an accepted producer.

@@ -26,6 +26,11 @@ The bridge uses **one request per connection**:
 4. The Python bridge client reads through the response newline, validates the JSON
    object and request ID, returns a result or maps the error, then closes its side.
 
+The current bridge client always emits `tools/call`. The Ruby dispatcher also
+accepts the historical direct `{"command": ..., "parameters": ...}` shape only as
+private compatibility for pre-catalog peers. It is not an MCP surface or a new
+integration path, and new callers must use the catalogued `tools/call` shape.
+
 Opening a connection and completing the exchange is the liveness check. There is no
 separate ping and no socket survives between tool calls.
 

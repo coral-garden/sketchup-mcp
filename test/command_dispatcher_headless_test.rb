@@ -33,11 +33,8 @@ class CommandDispatcherHeadlessTest
     assert_equal 'name must be a string', invalid_name.dig(:error, :message)
   end
 
-  def test_command_dispatcher_routes_non_public_command_bridge_methods
-    dispatcher = SU_MCP::CommandDispatcher.new(
-      executor: UnreachedCommandExecutor.new,
-      resources: -> { [{ uri: 'sketchup://selection' }] }
-    )
+  def test_bridge_rejects_methods_outside_public_command_dispatch
+    dispatcher = SU_MCP::CommandDispatcher.new(executor: UnreachedCommandExecutor.new)
 
     resources = dispatcher.call(
       'jsonrpc' => '2.0', 'method' => 'resources/list', 'id' => 'resources'
@@ -49,8 +46,10 @@ class CommandDispatcherHeadlessTest
       'jsonrpc' => '2.0', 'method' => 'unknown/list', 'id' => 'unknown'
     )
 
-    assert_equal [{ uri: 'sketchup://selection' }], resources.dig(:result, :resources)
-    assert_equal [], prompts.dig(:result, :prompts)
+    assert_equal(-32_601, resources.dig(:error, :code))
+    assert_equal 'resources', resources[:id]
+    assert_equal(-32_601, prompts.dig(:error, :code))
+    assert_equal 'prompts', prompts[:id]
     assert_equal(-32_601, unknown.dig(:error, :code))
     assert_equal 'unknown', unknown[:id]
   end

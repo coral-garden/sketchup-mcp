@@ -35,10 +35,7 @@ module SU_MCP
       commands = SketchupCommands.new
       adapter = SketchupAdapter.new(commands: commands)
       executor = CommandExecutor.new(adapter: adapter, logger: logger)
-      dispatcher = CommandDispatcher.new(
-        executor: executor,
-        resources: adapter.method(:list_resources)
-      )
+      dispatcher = CommandDispatcher.new(executor: executor)
       listener = BridgeListener.new(
         port: port,
         handler: dispatcher.method(:call),

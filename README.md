@@ -247,6 +247,15 @@ The fixed loopback host cannot be configured.
 The connection lifecycle and trust decision are recorded in
 [ADR 0001](docs/adr/0001-local-one-request-bridge-lifecycle.md).
 
+Release verification also requires clean-install acceptance from the protected
+licensed desktop workflow: a second SketchUp launch must use the already-installed
+exact RBZ and the exact built Python wheel to initialize MCP, discover the full
+tool catalog, and return an empty `get_selection` result. That proof launches the
+same installed `sketchup-mcp` console script and empty argument list documented
+in step 5, with only its absolute checkout prefix redacted from evidence. The
+repository contains the validator and adversarial fixtures, but no
+licensed-runner acceptance result.
+
 ## Project documentation
 
 - [Domain language](CONTEXT.md)

@@ -74,6 +74,61 @@ class VerificationContractTest(unittest.TestCase):
         self.assertEqual(2, runtime.count("sketchup_runtime_runner.py prepare"))
         self.assertEqual(2, runtime.count("sketchup_runtime_runner.py collect"))
         self.assertEqual(2, runtime.count("sketchup_runtime_runner.py cleanup"))
+        self.assertEqual(2, runtime.count("install_acceptance.py prepare"))
+        self.assertEqual(2, runtime.count("install_acceptance.py collect"))
+        self.assertEqual(2, runtime.count("uv sync --locked --python 3.12 --group test --group build"))
+        self.assertEqual(2, runtime.count("uv build --offline --no-build-isolation --out-dir dist"))
+        self.assertGreaterEqual(runtime.count("-RubyStartup"), 4)
+        self.assertEqual(2, runtime.count("SKETCHUP_MCP_BRIDGE_PORT"))
+        self.assertEqual(4, runtime.count("19877"))
+        self.assertIn("19877", runtime)
+        self.assertIn("acceptance_startup", runtime)
+        self.assertIn("install acceptance evidence is missing", runtime)
+        self.assertNotIn("--command", runtime)
+        self.assertNotIn("--url", runtime)
+        self.assertNotIn("Stop-Process", runtime)
+        self.assertNotIn("pkill", runtime)
+        self.assertNotIn("taskkill", runtime)
+        self.assertEqual(
+            2,
+            runtime.count(
+                "second SketchUp launch did not exit after its fixed stop marker"
+            ),
+        )
+        windows = runtime.split("jobs:\n  windows:", 1)[1].split("\n  macos:", 1)[0]
+        macos = runtime.split("\n  macos:", 1)[1]
+        windows_collect = windows.index("install_acceptance.py collect")
+        windows_failure = windows.index(
+            "$collectorFailure = 'install acceptance collection failed'",
+            windows_collect,
+        )
+        windows_stop = windows.index("install_acceptance.py signal-stop", windows_failure)
+        windows_wait = windows.index("$process.WaitForExit(15000)", windows_stop)
+        windows_terminate = windows.index("$process.Kill()", windows_wait)
+        windows_propagate = windows.index(
+            "if ($collectorFailure) { throw $collectorFailure }", windows_wait
+        )
+        self.assertLess(windows_collect, windows_failure)
+        self.assertLess(windows_failure, windows_stop)
+        self.assertLess(windows_stop, windows_wait)
+        self.assertLess(windows_wait, windows_terminate)
+        self.assertLess(windows_wait, windows_propagate)
+
+        macos_collect = macos.index("install_acceptance.py collect")
+        macos_status = macos.index("collector_status=$?", macos_collect)
+        macos_stop = macos.index("install_acceptance.py signal-stop", macos_status)
+        macos_wait = macos.index('wait "$sketchup_pid"', macos_stop)
+        macos_propagate = macos.index(
+            '[[ "$collector_status" -eq 0 ]]', macos_wait
+        )
+        self.assertLess(macos_collect, macos_status)
+        self.assertLess(macos_status, macos_stop)
+        self.assertLess(macos_stop, macos_wait)
+        self.assertLess(macos_wait, macos_propagate)
+        self.assertIn('kill -TERM -- "$sketchup_pid"', macos)
+        self.assertIn('kill -KILL -- "$sketchup_pid"', macos)
+        self.assertIn("Get-CimInstance Win32_OperatingSystem", windows)
+        self.assertIn("sw_vers -productVersion", macos)
         self.assertNotIn("sketchup_runtime_evidence.py collect", runtime)
         self.assertNotIn("--run-context',", runtime)
         self.assertGreaterEqual(runtime.count("-RubyStartup"), 2)
@@ -131,8 +186,13 @@ class VerificationContractTest(unittest.TestCase):
         self.assertIn("wrong-kind", guide)
         self.assertIn("workflow dispatcher", guide)
         self.assertIn("not treated as the operator", guide)
+        self.assertIn("second time", guide)
+        self.assertIn("official Python MCP SDK stdio client", guide)
+        self.assertIn("raw `CallToolResult`", guide)
+        self.assertIn("Only the protected", guide)
         self.assertIn(
-            "separate `python`, `headless_ruby`, and `sketchup_runtime`", guide
+            "separate `python`, `headless_ruby`, `sketchup_runtime`, and",
+            guide,
         )
 
 

@@ -38,12 +38,15 @@ class TrustedRun:
 
 @dataclass(frozen=True)
 class TrustedRuntimeBundle:
-    """Validated fixed-layout runtime files ready for the #15 validator."""
+    """Validated fixed-layout runtime files ready for public validators."""
 
     workspace: Path
     evidence: dict[str, Any]
     raw_paths: RawArtifactPaths
     retained_rbz: Path
+    retained_wheel: Path
+    retained_sdist: Path
+    acceptance_dir: Path
 
 
 def _read_json(path: Path, label: str) -> dict[str, Any]:
@@ -174,6 +177,18 @@ def load_runtime_bundle(
     rbz = workspace / f"sketchup-mcp-{version}.rbz"
     if rbz.is_symlink() or not rbz.is_file():
         raise TrustedReleaseError("retained RBZ is missing or is not a regular file")
+    wheel = workspace / f"sketchup_mcp-{version}-py3-none-any.whl"
+    sdist = workspace / f"sketchup_mcp-{version}.tar.gz"
+    for path, label in (
+        (wheel, "retained wheel"),
+        (sdist, "retained source distribution"),
+    ):
+        if path.is_symlink() or not path.is_file():
+            raise TrustedReleaseError(f"{label} is missing or is not a regular file")
+    acceptance = workspace / "install-acceptance"
+    if acceptance.is_symlink() or not acceptance.is_dir():
+        raise TrustedReleaseError("install acceptance directory is missing or unsafe")
+    _read_json(acceptance / "evidence.json", "install acceptance evidence")
     run_context = workspace / "run-context.json"
     try:
         validate_installation_bundle(
@@ -191,6 +206,9 @@ def load_runtime_bundle(
         evidence=evidence,
         raw_paths=raw_paths,
         retained_rbz=rbz,
+        retained_wheel=wheel,
+        retained_sdist=sdist,
+        acceptance_dir=acceptance,
     )
 
 

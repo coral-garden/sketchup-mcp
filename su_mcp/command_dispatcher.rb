@@ -6,9 +6,8 @@ require_relative 'command_response_builder'
 
 module SU_MCP
   class CommandDispatcher
-    def initialize(executor:, resources: nil, catalog: CommandCatalog.new)
+    def initialize(executor:, catalog: CommandCatalog.new)
       @executor = executor
-      @resources = resources || -> { [] }
       @responses = CommandResponseBuilder.new(catalog: catalog)
     end
 
@@ -22,10 +21,6 @@ module SU_MCP
       case request['method']
       when 'tools/call'
         dispatch_command(request)
-      when 'resources/list'
-        success_response({ resources: @resources.call, success: true }, request['id'])
-      when 'prompts/list'
-        success_response({ prompts: [], success: true }, request['id'])
       else
         @responses.error(-32_601, message: 'Method not found', id: request['id'])
       end
@@ -58,6 +53,7 @@ module SU_MCP
     end
 
     def legacy_request(request)
+      # Compatibility for pre-catalog bridge peers. New peers send tools/call.
       {
         'jsonrpc' => request.fetch('jsonrpc', '2.0'),
         'method' => 'tools/call',
@@ -67,10 +63,6 @@ module SU_MCP
         },
         'id' => request['id']
       }
-    end
-
-    def success_response(result, id)
-      { jsonrpc: '2.0', result: result, id: id }
     end
   end
 end

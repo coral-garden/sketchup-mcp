@@ -5,6 +5,10 @@ require_relative 'extension_runtime'
 
 
 module SU_MCP
+  def self.extension_runtime
+    @extension_runtime
+  end
+
   unless file_loaded?(__FILE__)
     logger = ConsoleLogger.new
     begin

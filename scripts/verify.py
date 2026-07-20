@@ -377,15 +377,22 @@ def _release_report(
     local_scopes: dict[str, object] | None,
     runtime_passed: bool,
     runtime_coverage: dict[str, object] | None,
+    install_passed: bool,
     commit: str | None,
     run_id: int,
-    reason: str | None,
+    runtime_reason: str | None,
+    install_reason: str | None,
 ) -> bool:
     runtime: dict[str, object] = {"status": "pass" if runtime_passed else "fail"}
     if runtime_coverage is not None:
         runtime["coverage"] = runtime_coverage
-    if reason is not None:
-        runtime["reason"] = reason
+    if runtime_reason is not None:
+        runtime["reason"] = runtime_reason
+    install: dict[str, object] = {
+        "status": "pass" if install_passed else "fail"
+    }
+    if install_reason is not None:
+        install["reason"] = install_reason
     document = {
         "schema_version": 1,
         "mode": "release",
@@ -404,6 +411,7 @@ def _release_report(
                 else {"status": "fail", "coverage": None}
             ),
             "sketchup_runtime": runtime,
+            "install_acceptance": install,
         },
     }
     try:
@@ -505,8 +513,10 @@ def verify_release(runtime_root: Path, run_id: int, report_path: Path) -> int:
     local_passed = local_scopes is not None
     runtime_passed = False
     runtime_coverage: dict[str, object] | None = None
+    install_passed = False
     commit: str | None = None
-    reason: str | None = None
+    runtime_reason: str | None = None
+    install_reason: str | None = None
     phase = "SketchUp runtime evidence"
     environment = _environment()
 
@@ -577,25 +587,57 @@ def verify_release(runtime_root: Path, run_id: int, report_path: Path) -> int:
                     "SketchUp runtime evidence", validate_command, environment
                 ):
                     raise VerificationError("public runtime evidence validator failed")
-            runtime_passed = True
-            print("SketchUp runtime: PASS")
+                runtime_passed = True
+                print("SketchUp runtime: PASS")
+                phase = "Install acceptance evidence"
+                install_command = [
+                    sys.executable,
+                    str(REPO_ROOT / "scripts/install_acceptance.py"),
+                    "validate",
+                    "--acceptance-dir",
+                    str(bundle.acceptance_dir),
+                    "--evidence",
+                    str(bundle.acceptance_dir / "evidence.json"),
+                    "--rbz",
+                    str(bundle.retained_rbz),
+                    "--wheel",
+                    str(bundle.retained_wheel),
+                    "--sdist",
+                    str(bundle.retained_sdist),
+                    "--commit",
+                    commit,
+                    "--dispatcher",
+                    trusted_run.dispatcher,
+                    "--github-run-id",
+                    str(run_id),
+                ]
+                if not _run("Install acceptance evidence", install_command, environment):
+                    raise VerificationError("public install acceptance validator failed")
+            install_passed = True
+            print("Install acceptance: PASS")
         except (OSError, TrustedReleaseError, VerificationError) as error:
-            reason = str(error)
-            print(f"{phase}: FAIL ({reason})")
+            failure_reason = str(error)
+            if runtime_passed:
+                install_reason = failure_reason
+            else:
+                runtime_reason = failure_reason
+            print(f"{phase}: FAIL ({failure_reason})")
     else:
-        reason = "local verification failed"
+        runtime_reason = "local verification failed"
         print("SketchUp runtime evidence: FAIL (local verification failed first)")
 
-    passed = local_passed and runtime_passed
+    passed = local_passed and runtime_passed and install_passed
     report_written = _release_report(
         report_path,
         passed=passed,
         local_scopes=local_scopes,
         runtime_passed=runtime_passed,
         runtime_coverage=runtime_coverage,
+        install_passed=install_passed,
         commit=commit,
         run_id=run_id,
-        reason=reason,
+        runtime_reason=runtime_reason,
+        install_reason=install_reason,
     )
     passed = passed and report_written
     print(f"Release verification: {'PASS' if passed else 'FAIL'}")

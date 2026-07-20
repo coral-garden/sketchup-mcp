@@ -255,8 +255,9 @@ class BridgeClient:
     def _request(method, params, request_id):
         """Normalize direct commands and legacy pre-wrapped tool calls.
 
-        Both forms remain supported until issue #11 migrates the remaining MCP
-        handlers to the focused command interface.
+        New callers pass a public command name. The pre-wrapped form remains an
+        explicit compatibility input for callers that previously constructed the
+        private bridge request themselves.
         """
 
         if method == "tools/call" and params and {"name", "arguments"} <= params.keys():

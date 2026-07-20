@@ -14,7 +14,7 @@ module SU_MCP
     extension.description = 'SketchUp extension that runs the local command bridge'
     extension.version = SU_MCP::VERSION
     extension.copyright = '2024'
-    extension.creator = 'MCP Team'
+    extension.creator = 'Coral Garden'
     Sketchup.register_extension(extension, true)
     file_loaded(__FILE__)
   end

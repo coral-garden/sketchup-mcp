@@ -206,6 +206,13 @@ class ReleaseVerificationTest(unittest.TestCase):
         (self.run / "candidate-install.json").write_text(
             json.dumps(marker), encoding="utf-8"
         )
+        self.wheel_name = f"sketchup_mcp-{self.version}-py3-none-any.whl"
+        self.sdist_name = f"sketchup_mcp-{self.version}.tar.gz"
+        (self.run / self.wheel_name).write_bytes(b"retained wheel")
+        (self.run / self.sdist_name).write_bytes(b"retained sdist")
+        acceptance = self.run / "install-acceptance"
+        acceptance.mkdir()
+        (acceptance / "evidence.json").write_text("{}", encoding="utf-8")
         self.metadata = self._metadata()
         self._write_metadata()
 
@@ -348,6 +355,24 @@ class ReleaseVerificationTest(unittest.TestCase):
             "--suite-marker",
         ):
             self.assertIn(option, validate)
+        install_validate = next(
+            command for command in commands if "install_acceptance.py" in command[1]
+        )
+        self.assertEqual("validate", install_validate[2])
+        self.assertEqual(
+            str(self.run / "install-acceptance" / "evidence.json"),
+            install_validate[install_validate.index("--evidence") + 1],
+        )
+        self.assertEqual(
+            str(self.run / self.wheel_name),
+            install_validate[install_validate.index("--wheel") + 1],
+        )
+        self.assertEqual("ada-login", install_validate[install_validate.index("--dispatcher") + 1])
+        self.assertEqual(
+            str(self.RUN_ID),
+            install_validate[install_validate.index("--github-run-id") + 1],
+        )
+        self.assertIn("Install acceptance: PASS", output)
         self.assertIn("SketchUp runtime: PASS", output)
         self.assertIn("Release verification: PASS", output)
 
@@ -379,6 +404,7 @@ class ReleaseVerificationTest(unittest.TestCase):
             report["scopes"]["headless_ruby"],
         )
         self.assertEqual("pass", report["scopes"]["sketchup_runtime"]["status"])
+        self.assertEqual("pass", report["scopes"]["install_acceptance"]["status"])
         self.assertEqual(
             {"covered": 201, "total": 201},
             report["scopes"]["sketchup_runtime"]["coverage"]["lines"],
@@ -628,30 +654,70 @@ class ReleaseVerificationTest(unittest.TestCase):
                 marker_path.write_text(original_marker, encoding="utf-8")
 
     def test_release_rejects_a_missing_or_failed_public_evidence_validator(self):
-        for failure in (FileNotFoundError(2, "missing"), 9):
-            with self.subTest(failure=failure):
-                verifier = load_verifier()
+        for script_name in ("sketchup_runtime_evidence.py", "install_acceptance.py"):
+            for failure in (FileNotFoundError(2, "missing"), 9):
+                with self.subTest(script=script_name, failure=failure):
+                    verifier = load_verifier()
 
-                def fail_validator(command, **options):
-                    if len(command) > 1 and "sketchup_runtime_evidence.py" in command[1]:
-                        if isinstance(failure, BaseException):
-                            raise failure
-                        return subprocess.CompletedProcess(command, failure, "", "")
-                    return self._successful_subprocess(command, **options)
+                    def fail_validator(command, **options):
+                        if len(command) > 1 and script_name in command[1]:
+                            if isinstance(failure, BaseException):
+                                raise failure
+                            return subprocess.CompletedProcess(command, failure, "", "")
+                        return self._successful_subprocess(command, **options)
 
-                output = io.StringIO()
+                    output = io.StringIO()
+                    with mock.patch.object(
+                        verifier, "verify_local", side_effect=self._pass_local
+                    ):
+                        with mock.patch.object(verifier, "_utc_now", return_value=self.NOW):
+                            with mock.patch.object(
+                                verifier.subprocess, "run", side_effect=fail_validator
+                            ):
+                                with contextlib.redirect_stdout(output):
+                                    status = verifier.main(self._arguments())
+
+                    self.assertEqual(1, status)
+                    self.assertIn("FAIL", output.getvalue())
+
+    def test_release_rejects_missing_install_acceptance_artifacts(self):
+        (self.run / "install-acceptance" / "evidence.json").unlink()
+        verifier = load_verifier()
+
+        status, output, calls = self._run_release(verifier)
+
+        self.assertEqual(1, status)
+        self.assertIn("install acceptance", output.lower())
+        self.assertFalse(
+            any("install_acceptance.py" in call.args[0][1] for call in calls if len(call.args[0]) > 1)
+        )
+
+    def test_install_acceptance_failure_preserves_the_passing_runtime_scope(self):
+        verifier = load_verifier()
+
+        def fail_install_acceptance(command, **options):
+            if len(command) > 1 and "install_acceptance.py" in command[1]:
+                return subprocess.CompletedProcess(command, 9, "", "")
+            return self._successful_subprocess(command, **options)
+
+        output = io.StringIO()
+        with mock.patch.object(verifier, "verify_local", side_effect=self._pass_local):
+            with mock.patch.object(verifier, "_utc_now", return_value=self.NOW):
                 with mock.patch.object(
-                    verifier, "verify_local", side_effect=self._pass_local
+                    verifier.subprocess,
+                    "run",
+                    side_effect=fail_install_acceptance,
                 ):
-                    with mock.patch.object(verifier, "_utc_now", return_value=self.NOW):
-                        with mock.patch.object(
-                            verifier.subprocess, "run", side_effect=fail_validator
-                        ):
-                            with contextlib.redirect_stdout(output):
-                                status = verifier.main(self._arguments())
+                    with contextlib.redirect_stdout(output):
+                        status = verifier.main(self._arguments())
 
-                self.assertEqual(1, status)
-                self.assertIn("SketchUp runtime evidence: FAIL", output.getvalue())
+        report = json.loads(Path(self._arguments()[-1]).read_text(encoding="utf-8"))
+        self.assertEqual(1, status)
+        self.assertEqual("pass", report["scopes"]["sketchup_runtime"]["status"])
+        self.assertNotIn("reason", report["scopes"]["sketchup_runtime"])
+        self.assertEqual("fail", report["scopes"]["install_acceptance"]["status"])
+        self.assertIn("validator failed", report["scopes"]["install_acceptance"]["reason"])
+        self.assertIn("SketchUp runtime: PASS", output.getvalue())
 
     def test_release_rejects_missing_or_incomplete_local_scope_metrics(self):
         verifier = load_verifier()

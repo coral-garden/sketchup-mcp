@@ -21,7 +21,7 @@ uv sync --locked --python 3.10 --group test --group build
 ```
 
 The committed `uv.lock` is the reviewed application, runtime, test, and build
-dependency graph. Do not use `requirements.txt` for contributor setup.
+dependency graph.
 
 Run the repository gate through that locked environment:
 
@@ -95,17 +95,23 @@ uv run --locked --group test --group build python scripts/verify.py release --ru
 
 Release verification repeats the complete local gate, checks the trusted GitHub
 run identity and freshness, rebuilds the RBZ, and validates the raw TestUp and
-installed-package evidence. Python, headless Ruby, and the production SketchUp
-adapter must each have exactly 100% line and branch coverage. A success ends
-with:
+installed-package evidence. It also requires the protected workflow's second
+SketchUp launch to prove the exact installed wheel and RBZ through the
+production stdio MCP server: initialize, discover the full tool catalog, and
+return an exact empty selection from `get_selection`. Python, headless Ruby,
+and the production SketchUp adapter must each have exactly 100% line and branch
+coverage. A success ends with:
 
 ```text
 Python: PASS
 Headless Ruby: PASS
 SketchUp runtime: PASS
+Install acceptance: PASS
 Release verification: PASS
 ```
 
 The aggregate is written to `artifacts/verification/release.json`. This workflow
 only prepares and verifies files; it does not change Git history, publish a
 GitHub release, or upload a Python package or RBZ to a distribution service.
+No licensed-runner acceptance result is checked into this repository; only a
+fresh artifact produced by the protected desktop workflow satisfies the gate.

@@ -88,6 +88,10 @@ single-TestUp-process attestations. Hashes protect the retained files from
 undetected changes; they do not prove process provenance.
 _Avoid_: headless proof, generic CI result
 
+**Install acceptance evidence**:
+The integrity-checked record that one exact MCP server distribution and extension package completed MCP discovery and a read-only command through a fresh desktop launch of the installed SketchUp extension.
+_Avoid_: TestUp coverage, headless integration result, manual smoke test
+
 ---
 
 Bridge lifecycle, framing, retry, port, and trust-boundary decisions live in

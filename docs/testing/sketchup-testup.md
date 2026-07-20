@@ -55,6 +55,16 @@ access to the local host, not to the current OS user; any local process or user
 able to connect to `127.0.0.1` can invoke it. Run this workflow on a trusted,
 isolated desktop account.
 
+After this TestUp run, the protected workflow performs a distinct clean-install
+acceptance run. It launches SketchUp again without reinstalling the candidate,
+uses the static `testup/install_acceptance/startup.rb` harness and its adjacent
+JSON input, clears the active selection, and starts the production bridge. The
+official Python MCP SDK then initializes the exact installed server, discovers
+all catalog tools, and calls the read-only `get_selection` tool. Acceptance
+requires the raw SDK result to contain the exact empty-selection success
+envelope. A fixed marker stops the bridge and quits SketchUp; no process-wide
+kill command is part of the workflow.
+
 ## Prepare the exact run
 
 Use a clean checkout of the commit being verified and build the RBZ once:
@@ -224,12 +234,14 @@ runner paths or raw exception text.
 
 Preserve `run-context.json`, the generated config, verbose TestUp JSON, the raw
 FileReporter `.log` and replay `.run`, empty TestUp error log, suite marker,
-runtime report, final evidence, and tested RBZ together for a release audit.
-The replay is part of the evidence and must not be discarded.
+runtime report, final evidence, tested RBZ, wheel, source distribution, and the
+complete `install-acceptance/` directory together for a release audit. The
+replay and raw install-acceptance files are evidence and must not be discarded.
 
 Linux/headless checks validate suite structure, safe cleanup, catalog parity,
 evidence schema, package binding, exact mismatch rejection, and fail-closed
 behavior. A Linux/headless pass does not satisfy issue #15: acceptance requires
 `validate` to pass with artifacts produced by the designated licensed
-Windows/macOS SketchUp runner. This repository does not contain such a licensed
-runtime artifact; the workflow produces it on the trusted desktop runner.
+Windows/macOS SketchUp runner. The same is true of clean-install acceptance.
+This repository does not contain either licensed runtime artifact; the
+protected workflow produces both on the trusted desktop runner.
