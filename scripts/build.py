@@ -7,7 +7,12 @@ import argparse
 from pathlib import Path
 import sys
 
-from extension_package import PackageError, build_package, check_package
+from extension_package import (
+    PackageError,
+    build_package,
+    check_package,
+    project_version,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -21,11 +26,17 @@ def _arguments() -> argparse.Namespace:
         default=REPO_ROOT / "dist",
         help="artifact directory (default: dist)",
     )
-    parser.add_argument(
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument(
         "--check",
         type=Path,
         metavar="RBZ",
         help="validate an existing package instead of building",
+    )
+    action.add_argument(
+        "--print-version",
+        action="store_true",
+        help="print the validated VERSION value instead of building",
     )
     return parser.parse_args()
 
@@ -33,6 +44,9 @@ def _arguments() -> argparse.Namespace:
 def main() -> int:
     args = _arguments()
     try:
+        if args.print_version:
+            print(project_version(REPO_ROOT))
+            return 0
         report = (
             check_package(REPO_ROOT, args.check)
             if args.check is not None

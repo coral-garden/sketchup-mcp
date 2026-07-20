@@ -3,8 +3,8 @@
 The repository has one verification entry point with two modes:
 
 ```text
-python scripts/verify.py local
-python scripts/verify.py release --runtime-root PATH --runtime-run-id RUN_ID
+uv run --locked --group test --group build python scripts/verify.py local
+uv run --locked --group test --group build python scripts/verify.py release --runtime-root PATH --runtime-run-id RUN_ID
 ```
 
 `local` is the contributor and hosted-CI gate. `release` repeats that gate and
@@ -13,13 +13,8 @@ publishes a package.
 
 ## Local verification
 
-Install the project requirements, Ruby, and the pinned coverage dependency,
-then run:
-
-```sh
-python -m pip install --requirement requirements.txt "coverage[toml]==7.10.7"
-python scripts/verify.py local
-```
+Follow the exact fresh-clone, locked dependency, and local verifier commands in
+the canonical [contributor workflow](../../CONTRIBUTING.md).
 
 This runs the Python coverage suite, the complete Python integration suite, the
 headless Ruby coverage suite, and the complete headless Ruby integration suite.
@@ -139,6 +134,11 @@ in-SketchUp evidence must be no more than 24 hours old. Finally it invokes the
 public runtime evidence validator, which requires the exact version, RBZ bytes,
 suite and command-catalog hashes, supported runtime, passing TestUp inventory,
 and 100% production-adapter line and branch coverage.
+
+After release mode passes, the workflow prepares and validates the versioned
+RBZ, wheel, and source distribution and preserves them as a workflow artifact.
+It does not create a tag, publish a GitHub release, or upload to a package
+registry.
 
 The aggregate result is `artifacts/verification/release.json`. It retains
 separate `python`, `headless_ruby`, and `sketchup_runtime` scopes. Python and

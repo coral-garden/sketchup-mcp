@@ -21,6 +21,10 @@ dependencies = [
 test = [
     "coverage[toml]==7.10.7",
 ]
+build = [
+    "setuptools==80.9.0",
+    "wheel==0.45.1",
+]
 
 [project.urls]
 Homepage = "https://github.com/yourusername/sketchup-mcp"
@@ -33,7 +37,7 @@ sketchup-mcp = "sketchup_mcp.mcp_server:main"
 sketchup = "sketchup_mcp.mcp_server:mcp"
 
 [build-system]
-requires = ["setuptools>=66.1", "wheel"]
+requires = ["setuptools==80.9.0", "wheel==0.45.1"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

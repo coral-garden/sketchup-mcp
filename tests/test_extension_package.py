@@ -92,7 +92,7 @@ class ExtensionPackageTest(unittest.TestCase):
             '[tool.setuptools.dynamic]\nversion = {file = ["VERSION"]}',
             configuration,
         )
-        self.assertIn('"setuptools>=66.1"', configuration)
+        self.assertIn('"setuptools==80.9.0"', configuration)
 
         environment = os.environ.copy()
         environment["PYTHONPATH"] = str(REPO_ROOT / "src")
@@ -114,6 +114,48 @@ class ExtensionPackageTest(unittest.TestCase):
         self.assertEqual(
             [PROJECT_VERSION, PROJECT_VERSION], completed.stdout.splitlines()
         )
+
+    def test_version_query_validates_and_drives_the_artifact_name(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = self.copy_package_fixture(Path(temporary))
+            version = "2.3.4"
+            (fixture / "VERSION").write_text(version + "\n", encoding="utf-8")
+
+            queried = subprocess.run(
+                [sys.executable, str(fixture / "scripts/build.py"), "--print-version"],
+                cwd=fixture,
+                capture_output=True,
+                text=True,
+            )
+            built = self.run_fixture_build(fixture)
+            artifact = fixture / "dist" / f"sketchup-mcp-{version}.rbz"
+            checked = subprocess.run(
+                [
+                    sys.executable,
+                    str(fixture / "scripts/build.py"),
+                    "--check",
+                    str(artifact),
+                ],
+                cwd=fixture,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(0, queried.returncode, queried.stderr)
+            self.assertEqual(version, queried.stdout.strip())
+            self.assertEqual(0, built.returncode, built.stderr)
+            self.assertTrue(artifact.is_file())
+            self.assertEqual(0, checked.returncode, checked.stderr)
+
+            (fixture / "VERSION").write_text("2.3.4-rc1\n", encoding="utf-8")
+            rejected = subprocess.run(
+                [sys.executable, str(fixture / "scripts/build.py"), "--print-version"],
+                cwd=fixture,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(0, rejected.returncode)
+            self.assertIn("invalid project version", rejected.stderr.lower())
 
     def test_build_is_reproducible_and_contains_only_one_loader_layout(self):
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:

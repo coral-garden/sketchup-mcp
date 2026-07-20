@@ -1,10 +1,8 @@
 # Ruby test suites
 
-Run the deterministic coverage gate with:
-
-```sh
-ruby scripts/ruby_coverage.rb
-```
+Use the single repository setup and verification path in the
+[contributor workflow](../CONTRIBUTING.md). This page explains how the Ruby
+tests are divided; it does not define a second command path.
 
 The gate starts Ruby's standard-library coverage collector before loading the
 production source and runs all selected tests in one process. It exits non-zero
@@ -38,9 +36,5 @@ adapters or composition roots whose final verification belongs to the SketchUp
 runtime suite. Every Ruby runtime source file must appear in exactly one of the
 two executable lists; an unclassified file makes the coverage command fail.
 
-Run the broader multi-process Ruby suite, including real loopback integration,
-with:
-
-```sh
-ruby -Itest test/headless.rb
-```
+The local verifier also runs the broader multi-process Ruby suite, including
+real loopback integration, after the deterministic coverage gate.

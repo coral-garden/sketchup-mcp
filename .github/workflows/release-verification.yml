@@ -29,10 +29,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Select Python 3.12
+      - name: Select Python 3.10
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.12"
+          python-version: "3.10"
+
+      - name: Select Ruby 3.2.2
+        uses: ruby/setup-ruby@003a5c4d8d6321bd302e38f6f0ec593f77f06600 # v1
+        with:
+          ruby-version: "3.2.2"
+
+      - name: Install uv 0.10.4
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.10.4"
 
       - name: Require trusted immutable identifiers
         shell: bash
@@ -56,10 +66,8 @@ jobs:
           git checkout --detach "$CANDIDATE_SHA"
           [[ "$(git rev-parse HEAD)" = "$CANDIDATE_SHA" ]]
 
-      - name: Install verification dependencies
-        run: >-
-          python -m pip install --disable-pip-version-check
-          --requirement requirements.txt "coverage[toml]==7.10.7"
+      - name: Sync the reviewed Python dependency graph
+        run: uv sync --locked --python 3.10 --group test --group build
 
       - name: Capture trusted GitHub run and artifact metadata
         shell: bash
@@ -100,9 +108,27 @@ jobs:
         env:
           RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
         run: >-
-          python scripts/verify.py release
+          uv run --locked --group test --group build python scripts/verify.py release
           --runtime-root artifacts/trusted-runtime
           --runtime-run-id "$RUNTIME_RUN_ID"
+
+      - name: Prepare versioned release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python scripts/build.py --print-version)"
+          python scripts/build.py
+          python scripts/build.py --check "dist/sketchup-mcp-$version.rbz"
+          uv build --offline --no-build-isolation --out-dir dist
+          uv run --locked --group test --group build python scripts/check_python_distribution.py --dist-dir dist
+
+      - name: Preserve the verified release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-candidate-${{ inputs.candidate_sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Preserve the release verification report
         if: always()
