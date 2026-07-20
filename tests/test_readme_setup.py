@@ -52,7 +52,7 @@ class EndUserSetupDocumentationTest(unittest.TestCase):
 
     def test_one_ordered_path_covers_build_install_start_configure_and_smoke(self):
         steps = (
-            f"### 1. Build version {PROJECT_VERSION} from a clean checkout",
+            f"### 1. Download or build version {PROJECT_VERSION}",
             "### 2. Install the extension in SketchUp",
             "### 3. Start the bridge listener",
             "### 4. Install the Python MCP server",
@@ -70,16 +70,18 @@ class EndUserSetupDocumentationTest(unittest.TestCase):
 
     def test_artifact_commands_and_names_are_derived_from_project_version(self):
         artifact = f"sketchup-mcp-{PROJECT_VERSION}.rbz"
+        wheel = f"sketchup_mcp-{PROJECT_VERSION}-py3-none-any.whl"
 
-        self.assertIn("python scripts/build.py", README)
+        self.assertIn("python scripts/build.py --output-dir dist", README)
         self.assertIn(f"dist/{artifact}", README)
         self.assertIn(
             f"python scripts/build.py --check dist/{artifact}", README
         )
+        self.assertIn(f"dist/{wheel}", README)
+        self.assertIn("main-build-<full-commit-sha>", README)
+        self.assertIn("sha256sum --check SHA256SUMS", README)
         self.assertIn("SHA-256", README)
-        self.assertIn(f"release for `v{PROJECT_VERSION}`", README)
-        self.assertIn("published SHA-256", README)
-        self.assertIn("Compare its printed SHA-256", README)
+        self.assertIn("same full commit", README)
 
     def test_mcp_host_configuration_examples_are_complete_valid_json(self):
         configurations = [

@@ -1,11 +1,6 @@
 require 'sketchup.rb'
 require 'extensions.rb'
 
-if ENV['SKETCHUP_MCP_TESTUP_COVERAGE'] == '1'
-  require 'coverage'
-  Coverage.start(lines: true, branches: true) unless Coverage.running?
-end
-
 require_relative 'su_mcp/version'
 
 module SU_MCP

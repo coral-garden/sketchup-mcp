@@ -5,12 +5,7 @@ require_relative 'controlled_adapters'
 class TC_ProductionAdapter < TestUp::TestCase
   def self.test_order = :alpha
 
-  define_method(SketchupMcpTestUp.run_marker_test_name) do
-    assert_equal SketchupMcpTestUp.run_marker_test_name, name
-  end
-
   def setup
-    SketchupMcpTestUp.assert_runtime_configuration(self)
     @export_sandbox = SketchupMcpTestUp::ExportSandbox.new
     @previous_temp = @export_sandbox.environment.to_h do |name, _value|
       [name, ENV[name]]
@@ -455,10 +450,6 @@ class TC_ProductionAdapter < TestUp::TestCase
     )
     assert_equal entity_id, unchanged.fetch(:id)
     scenario_passed!
-  end
-
-  def test_zz_write_runtime_report
-    SketchupMcpTestUp.write_runtime_report!
   end
 
   private

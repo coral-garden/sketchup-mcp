@@ -50,3 +50,54 @@ jobs:
           path: artifacts/verification/local.json
           if-no-files-found: error
           retention-days: 14
+
+  build:
+    name: Build installable artifacts from main
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: local
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the verified main commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Select Python 3.10
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.10"
+
+      - name: Install uv 0.10.4
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.10.4"
+
+      - name: Sync the reviewed build dependency graph
+        run: uv sync --locked --python 3.10 --group test --group build
+
+      - name: Build and validate the extension package and Python distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python scripts/build.py --print-version)"
+          python scripts/build.py --output-dir dist
+          python scripts/build.py --check "dist/sketchup-mcp-$version.rbz"
+          uv build --offline --no-build-isolation --out-dir dist
+          uv run --locked --group test --group build python scripts/check_python_distribution.py --dist-dir dist
+          (
+            cd dist
+            sha256sum \
+              "sketchup-mcp-$version.rbz" \
+              "sketchup_mcp-$version-py3-none-any.whl" \
+              "sketchup_mcp-$version.tar.gz" \
+              > SHA256SUMS
+          )
+
+      - name: Preserve the exact main build for manual SketchUp acceptance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: main-build-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

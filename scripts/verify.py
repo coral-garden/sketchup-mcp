@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Run the repository's verification gates through one entry point."""
+"""Run the repository's headless verification gates through one entry point."""
 
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tempfile
@@ -16,23 +14,6 @@ from typing import Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_ROOT = Path(__file__).resolve().parent
-if str(SCRIPT_ROOT) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_ROOT))
-
-from trusted_release import (  # noqa: E402
-    TrustedReleaseError,
-    load_runtime_bundle,
-    validate_trusted_run,
-    validator_arguments,
-)
-
-
-COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
-
-
-class VerificationError(ValueError):
-    """A release input cannot satisfy the verification contract."""
 
 
 def _environment() -> dict[str, str]:
@@ -223,7 +204,7 @@ def _write_summary(
         "scopes": {
             "python": python_scope,
             "headless_ruby": ruby_scope,
-            "sketchup_runtime": {"status": "external", "required": False},
+            "sketchup_runtime": {"status": "manual", "required": False},
         },
     }
     try:
@@ -266,9 +247,7 @@ def verify_local(report_path: Path) -> int:
             ],
             python_environment,
         )
-        python_coverage = (
-            _python_metrics(python_report) if python_reported else None
-        )
+        python_coverage = _python_metrics(python_report) if python_reported else None
         python_integration = _run(
             "Python integration",
             [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
@@ -277,12 +256,7 @@ def verify_local(report_path: Path) -> int:
 
         ruby_gate = _run(
             "Headless Ruby coverage",
-            [
-                "ruby",
-                "scripts/ruby_coverage.rb",
-                "--json",
-                str(ruby_report),
-            ],
+            ["ruby", "scripts/ruby_coverage.rb", "--json", str(ruby_report)],
             environment,
         )
         ruby_coverage = _ruby_metrics(ruby_report) if ruby_gate else None
@@ -319,7 +293,7 @@ def verify_local(report_path: Path) -> int:
         _print_metrics("Headless Ruby coverage", ruby_coverage)
     print(f"Python: {'PASS' if python_passed else 'FAIL'}")
     print(f"Headless Ruby: {'PASS' if ruby_passed else 'FAIL'}")
-    print("SketchUp runtime: EXTERNAL (not available in local verification)")
+    print("SketchUp runtime: MANUAL (run the desktop acceptance checklist)")
     passed = python_passed and ruby_passed
     report_written = _write_summary(
         report_path,
@@ -336,323 +310,6 @@ def verify_local(report_path: Path) -> int:
     return 0 if passed else 1
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _required_string(value: object, label: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise VerificationError(f"{label} is missing")
-    return value
-
-
-def _regular_file(path: Path, label: str) -> Path:
-    if path.is_symlink() or not path.is_file():
-        raise VerificationError(f"{label} is missing or is not a regular file")
-    return path
-
-
-def _head_commit(environment: dict[str, str]) -> str:
-    try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=REPO_ROOT,
-            env=environment,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError as error:
-        raise VerificationError("git is required for release verification") from error
-    commit = completed.stdout.strip() if completed.returncode == 0 else ""
-    if not COMMIT_PATTERN.fullmatch(commit):
-        raise VerificationError("HEAD is not available as a full lowercase 40-character Git SHA")
-    return commit
-
-
-def _release_report(
-    path: Path,
-    *,
-    passed: bool,
-    local_scopes: dict[str, object] | None,
-    runtime_passed: bool,
-    runtime_coverage: dict[str, object] | None,
-    install_passed: bool,
-    commit: str | None,
-    run_id: int,
-    runtime_reason: str | None,
-    install_reason: str | None,
-) -> bool:
-    runtime: dict[str, object] = {"status": "pass" if runtime_passed else "fail"}
-    if runtime_coverage is not None:
-        runtime["coverage"] = runtime_coverage
-    if runtime_reason is not None:
-        runtime["reason"] = runtime_reason
-    install: dict[str, object] = {
-        "status": "pass" if install_passed else "fail"
-    }
-    if install_reason is not None:
-        install["reason"] = install_reason
-    document = {
-        "schema_version": 1,
-        "mode": "release",
-        "status": "pass" if passed else "fail",
-        "commit": commit,
-        "runtime_workflow_run_id": run_id,
-        "scopes": {
-            "python": (
-                local_scopes["python"]
-                if local_scopes is not None
-                else {"status": "fail", "coverage": None}
-            ),
-            "headless_ruby": (
-                local_scopes["headless_ruby"]
-                if local_scopes is not None
-                else {"status": "fail", "coverage": None}
-            ),
-            "sketchup_runtime": runtime,
-            "install_acceptance": install,
-        },
-    }
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-    except OSError as error:
-        print(f"Verification report: FAIL (cannot write {path}: {error})")
-        return False
-    print(f"Verification report: {path}")
-    return True
-
-
-def _local_release_scopes(path: Path) -> dict[str, object] | None:
-    document = _read_report(path, "Local verification report")
-    if document is None:
-        return None
-    if (
-        document.get("schema_version") != 1
-        or document.get("mode") != "local"
-        or document.get("status") != "pass"
-    ):
-        print("Local verification report: FAIL (report contract differs)")
-        return None
-    scopes = document.get("scopes")
-    if not isinstance(scopes, dict):
-        print("Local verification report: FAIL (runtime scopes are missing)")
-        return None
-    selected: dict[str, object] = {}
-    for name, label in (("python", "Python"), ("headless_ruby", "Headless Ruby")):
-        scope = scopes.get(name)
-        if not isinstance(scope, dict) or scope.get("status") != "pass":
-            print(f"Local verification report: FAIL ({label} scope did not pass)")
-            return None
-        coverage = scope.get("coverage")
-        if not isinstance(coverage, dict) or coverage.get("thresholds") != {
-            "lines": 100,
-            "branches": 100,
-        }:
-            print(f"Local verification report: FAIL ({label} thresholds differ)")
-            return None
-        for metric in ("lines", "branches"):
-            counts = coverage.get(metric)
-            if (
-                not isinstance(counts, dict)
-                or not isinstance(counts.get("covered"), int)
-                or isinstance(counts.get("covered"), bool)
-                or not isinstance(counts.get("total"), int)
-                or isinstance(counts.get("total"), bool)
-                or counts.get("total", 0) <= 0
-                or counts.get("covered") != counts.get("total")
-            ):
-                print(
-                    f"Local verification report: FAIL ({label} {metric} counts differ)"
-                )
-                return None
-        selected[name] = {
-            "status": "pass",
-            "coverage": {
-                "thresholds": {"lines": 100, "branches": 100},
-                "lines": dict(coverage["lines"]),
-                "branches": dict(coverage["branches"]),
-            },
-        }
-    return selected
-
-
-def _runtime_release_coverage(evidence: dict[str, object]) -> dict[str, object]:
-    coverage = evidence.get("coverage")
-    if not isinstance(coverage, dict):
-        raise VerificationError("runtime evidence coverage is missing")
-    result: dict[str, object] = {
-        "thresholds": {"lines": 100, "branches": 100}
-    }
-    for metric in ("lines", "branches"):
-        counts = coverage.get(metric)
-        if not isinstance(counts, dict):
-            raise VerificationError(f"runtime {metric} coverage is missing")
-        covered = counts.get("covered")
-        total = counts.get("total")
-        if (
-            not isinstance(covered, int)
-            or isinstance(covered, bool)
-            or not isinstance(total, int)
-            or isinstance(total, bool)
-            or total <= 0
-            or covered != total
-        ):
-            raise VerificationError(f"runtime {metric} coverage is not exactly 100%")
-        result[metric] = {"covered": covered, "total": total}
-    return result
-
-
-def verify_release(runtime_root: Path, run_id: int, report_path: Path) -> int:
-    local_report = REPO_ROOT / "artifacts" / "verification" / "local.json"
-    local_gate_passed = verify_local(local_report) == 0
-    local_scopes = _local_release_scopes(local_report) if local_gate_passed else None
-    local_passed = local_scopes is not None
-    runtime_passed = False
-    runtime_coverage: dict[str, object] | None = None
-    install_passed = False
-    commit: str | None = None
-    runtime_reason: str | None = None
-    install_reason: str | None = None
-    phase = "SketchUp runtime evidence"
-    environment = _environment()
-
-    if local_passed:
-        try:
-            commit = _head_commit(environment)
-            phase = "Trusted GitHub runtime run"
-            metadata = _read_report(runtime_root / "github-run.json", "Trusted GitHub runtime run")
-            if metadata is None:
-                raise VerificationError("trusted GitHub runtime manifest is unavailable")
-            trusted_run = validate_trusted_run(
-                metadata, run_id=run_id, commit=commit, now=_utc_now()
-            )
-            print("Trusted GitHub runtime run: PASS")
-
-            phase = "SketchUp runtime evidence"
-            version = _required_string(
-                (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip(),
-                "project version",
-            )
-            bundle = load_runtime_bundle(
-                repo_root=REPO_ROOT,
-                runtime_root=runtime_root,
-                commit=commit,
-                dispatcher=trusted_run.dispatcher,
-                version=version,
-                now=_utc_now(),
-            )
-            evidence = bundle.evidence
-            runtime_coverage = _runtime_release_coverage(evidence)
-            raw_arguments = validator_arguments(bundle.raw_paths)
-
-            rbz_name = f"sketchup-mcp-{version}.rbz"
-            retained_rbz = bundle.retained_rbz
-            with tempfile.TemporaryDirectory(
-                prefix="sketchup-mcp-release-verification-"
-            ) as directory:
-                build_dir = Path(directory)
-                if not _run(
-                    "Deterministic RBZ rebuild",
-                    [
-                        sys.executable,
-                        str(REPO_ROOT / "scripts/build.py"),
-                        "--output-dir",
-                        str(build_dir),
-                    ],
-                    environment,
-                ):
-                    raise VerificationError("deterministic RBZ rebuild failed")
-                rebuilt_rbz = _regular_file(build_dir / rbz_name, "rebuilt RBZ")
-                if retained_rbz.read_bytes() != rebuilt_rbz.read_bytes():
-                    raise VerificationError(
-                        "retained RBZ differs from deterministic rebuild"
-                    )
-                validate_command = [
-                    sys.executable,
-                    str(REPO_ROOT / "scripts/sketchup_runtime_evidence.py"),
-                    "validate",
-                    *raw_arguments,
-                    "--evidence",
-                    str(bundle.workspace / "evidence.json"),
-                    "--rbz",
-                    str(rebuilt_rbz),
-                    "--commit",
-                    commit,
-                ]
-                if not _run(
-                    "SketchUp runtime evidence", validate_command, environment
-                ):
-                    raise VerificationError("public runtime evidence validator failed")
-                runtime_passed = True
-                print("SketchUp runtime: PASS")
-                phase = "Install acceptance evidence"
-                install_command = [
-                    sys.executable,
-                    str(REPO_ROOT / "scripts/install_acceptance.py"),
-                    "validate",
-                    "--acceptance-dir",
-                    str(bundle.acceptance_dir),
-                    "--evidence",
-                    str(bundle.acceptance_dir / "evidence.json"),
-                    "--rbz",
-                    str(bundle.retained_rbz),
-                    "--wheel",
-                    str(bundle.retained_wheel),
-                    "--sdist",
-                    str(bundle.retained_sdist),
-                    "--commit",
-                    commit,
-                    "--dispatcher",
-                    trusted_run.dispatcher,
-                    "--github-run-id",
-                    str(run_id),
-                ]
-                if not _run("Install acceptance evidence", install_command, environment):
-                    raise VerificationError("public install acceptance validator failed")
-            install_passed = True
-            print("Install acceptance: PASS")
-        except (OSError, TrustedReleaseError, VerificationError) as error:
-            failure_reason = str(error)
-            if runtime_passed:
-                install_reason = failure_reason
-            else:
-                runtime_reason = failure_reason
-            print(f"{phase}: FAIL ({failure_reason})")
-    else:
-        runtime_reason = "local verification failed"
-        print("SketchUp runtime evidence: FAIL (local verification failed first)")
-
-    passed = local_passed and runtime_passed and install_passed
-    report_written = _release_report(
-        report_path,
-        passed=passed,
-        local_scopes=local_scopes,
-        runtime_passed=runtime_passed,
-        runtime_coverage=runtime_coverage,
-        install_passed=install_passed,
-        commit=commit,
-        run_id=run_id,
-        runtime_reason=runtime_reason,
-        install_reason=install_reason,
-    )
-    passed = passed and report_written
-    print(f"Release verification: {'PASS' if passed else 'FAIL'}")
-    return 0 if passed else 1
-
-
-def _positive_run_id(value: str) -> int:
-    if not value.isascii() or not value.isdecimal():
-        raise argparse.ArgumentTypeError("runtime run ID must contain decimal digits only")
-    run_id = int(value)
-    if run_id <= 0:
-        raise argparse.ArgumentTypeError("runtime run ID must be positive")
-    return run_id
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="mode", required=True)
@@ -663,22 +320,6 @@ def _parser() -> argparse.ArgumentParser:
         default=REPO_ROOT / "artifacts" / "verification" / "local.json",
         help="machine-readable aggregate report path",
     )
-    release = subparsers.add_parser(
-        "release", help="require fresh trusted SketchUp runtime evidence"
-    )
-    release.add_argument(
-        "--runtime-root",
-        type=Path,
-        required=True,
-        help="fixed directory containing github-run.json and one run-ID workspace",
-    )
-    release.add_argument("--runtime-run-id", type=_positive_run_id, required=True)
-    release.add_argument(
-        "--report",
-        type=Path,
-        default=REPO_ROOT / "artifacts" / "verification" / "release.json",
-        help="machine-readable aggregate release report path",
-    )
     return parser
 
 
@@ -686,10 +327,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     if arguments.mode == "local":
         return verify_local(arguments.report)
-    if arguments.mode == "release":
-        return verify_release(
-            arguments.runtime_root, arguments.runtime_run_id, arguments.report
-        )
     raise AssertionError(f"unsupported verification mode: {arguments.mode}")
 
 

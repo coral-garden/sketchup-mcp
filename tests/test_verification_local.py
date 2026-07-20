@@ -102,7 +102,7 @@ class LocalVerificationTest(unittest.TestCase):
         self.assertEqual(["ruby", "-Itest", "test/headless.rb"], commands[4])
         self.assertIn("Python: PASS", output.getvalue())
         self.assertIn("Headless Ruby: PASS", output.getvalue())
-        self.assertIn("SketchUp runtime: EXTERNAL", output.getvalue())
+        self.assertIn("SketchUp runtime: MANUAL", output.getvalue())
         self.assertIn("Local verification: PASS", output.getvalue())
 
     def test_local_shell_gates_use_the_same_python_environment_as_the_cli(self):
@@ -237,7 +237,7 @@ class LocalVerificationTest(unittest.TestCase):
             document["scopes"]["headless_ruby"],
         )
         self.assertEqual(
-            {"status": "external", "required": False},
+            {"status": "manual", "required": False},
             document["scopes"]["sketchup_runtime"],
         )
 
